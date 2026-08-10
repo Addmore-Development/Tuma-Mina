@@ -2,12 +2,6 @@ import { Link } from "react-router-dom";
 import Logo from "../components/Logo";
 import Button from "../components/Button";
 
-const CHECK = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" className="w-[18px] h-[18px] flex-shrink-0 text-coral">
-    <path d="M20 6L9 17l-5-5" />
-  </svg>
-);
-
 const steps = [
   { num: "01", title: "Post the task", body: "Describe it, set a budget or let runners quote. Add photos if it helps." },
   { num: "02", title: "A runner accepts", body: "Verified runners nearby see it and accept or negotiate the price." },
@@ -15,13 +9,72 @@ const steps = [
   { num: "04", title: "Confirm & pay", body: "Photo proof or a PIN confirms it. Funds release the moment you approve — or after 72 hours automatically." },
 ];
 
-const categories = [
-  { title: "Deliveries", body: "Parcels, groceries, gifts — door to door", price: "From R60" },
-  { title: "Documents", body: "Signed papers, applications, certified copies", price: "From R80" },
-  { title: "Queuing", body: "Home Affairs, banks, licensing — they wait, you don't", price: "From R120" },
-  { title: "Shopping", body: "Send a list, get the receipt and the goods", price: "From R90" },
-  { title: "Errands", body: "Drop-offs, pick-ups, anything local", price: "From R70" },
-  { title: "Custom tasks", body: "Tell us what you need — a runner will quote it", price: "Get a quote" },
+// Icons for the hero filter row — kept as simple line icons so they inherit currentColor
+const IconPackage = ({ className = "" }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M3 7.5l9-4 9 4-9 4-9-4z" />
+    <path d="M3 7.5v9l9 4 9-4v-9" />
+    <path d="M12 11.5v9" />
+  </svg>
+);
+const IconDocument = ({ className = "" }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <rect x="6" y="3" width="12" height="18" rx="1.5" />
+    <path d="M9 8h6M9 12h6M9 16h3.5" />
+  </svg>
+);
+const IconClock = ({ className = "" }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7.5V12l3.2 2" />
+  </svg>
+);
+const IconCart = ({ className = "" }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="9" cy="20" r="1.4" />
+    <circle cx="17.5" cy="20" r="1.4" />
+    <path d="M2.5 3h2l2.3 11.4a2 2 0 0 0 2 1.6h8a2 2 0 0 0 2-1.6L20.5 7H6" />
+  </svg>
+);
+const IconPin = ({ className = "" }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M12 21s7-6.7 7-12a7 7 0 1 0-14 0c0 5.3 7 12 7 12z" />
+    <circle cx="12" cy="9" r="2.4" />
+  </svg>
+);
+const IconEdit = ({ className = "" }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M16.7 3.7l3.6 3.6L7.5 20.1l-4.4.8.8-4.4z" />
+  </svg>
+);
+
+// Hero filter row — tailored to the Tuma Mina task categories
+const taskFilters = [
+  { title: "Deliveries", icon: IconPackage },
+  { title: "Documents", icon: IconDocument },
+  { title: "Queuing", icon: IconClock },
+  { title: "Shopping", icon: IconCart },
+  { title: "Errands", icon: IconPin },
+  { title: "Custom tasks", icon: IconEdit },
+];
+
+// Popular tasks — solid-colour tiles stand in for photography, title + price only
+const popularTasks = [
+  { title: "Parcel Delivery", price: "From R60", icon: IconPackage, bg: "bg-indigo-950" },
+  { title: "Document Courier", price: "From R80", icon: IconDocument, bg: "bg-coral" },
+  { title: "Home Affairs Queue", price: "From R120", icon: IconClock, bg: "bg-indigo-600" },
+  { title: "Grocery Run", price: "From R90", icon: IconCart, bg: "bg-brand-green" },
+  { title: "Bank Queue", price: "From R100", icon: IconClock, bg: "bg-indigo-900" },
+  { title: "Furniture Pickup", price: "From R150", icon: IconPin, bg: "bg-coral-dark" },
+  { title: "Gift Delivery", price: "From R70", icon: IconPackage, bg: "bg-indigo-600" },
+  { title: "Custom Errand", price: "Get a quote", icon: IconEdit, bg: "bg-indigo-950" },
+];
+
+// Simplified "How it works" steps for the runner overlay card
+const runnerHowItWorks = [
+  { dot: "bg-[#c9a4ff]", body: "Choose jobs by price, distance and rating." },
+  { dot: "bg-[#ffd166]", body: "Accept a job and get moving in minutes." },
+  { dot: "bg-brand-green", body: "Get proof, get paid — straight to your wallet." },
 ];
 
 const guarantees = [
@@ -62,9 +115,9 @@ const quickTasks = [
 export default function Landing() {
   return (
     <div>
-      {/* Hero — full-bleed photo, nav overlaid, ProBio-style */}
-      <section className="relative min-h-[640px] flex flex-col overflow-hidden">
-        {/* Topbar — transparent over the photo, no border/shadow */}
+      {/* Hero — full-bleed photo restored, own headline, search + icon filters layered on top */}
+      <section className="relative min-h-[720px] flex flex-col overflow-hidden">
+        {/* Topbar — transparent over the photo */}
         <div className="relative z-20 flex items-center justify-between px-[6vw] py-[18px]">
           <Logo light />
           <div className="hidden md:flex items-center gap-9">
@@ -77,41 +130,67 @@ export default function Landing() {
             <Link to="/register"><Button variant="primary">Join now</Button></Link>
           </div>
         </div>
-        {/* Background photo — drop your own asset at public/hero.jpg */}
+        {/* Background photo */}
         <img
           src="/hero.jpg"
           alt="Tuma Mina client booking a task from her phone"
           className="absolute inset-0 z-0 w-full h-full object-cover"
         />
         {/* Scrim for text legibility — flat solid tint, no gradient */}
-        <div className="absolute inset-0 z-0 bg-indigo-850/55" />
+        <div className="absolute inset-0 z-0 bg-indigo-950/60" />
 
-        <div className="relative z-10 flex-1 flex flex-col justify-center px-[6vw] py-24 max-w-[640px] ml-auto">
+        <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-[6vw] py-20">
           <div className="inline-flex items-center gap-2 w-fit font-mono text-xs uppercase tracking-wider text-indigo-100 border border-white/30 rounded-full px-3.5 py-1.5 mb-6">
             <span className="w-1.5 h-1.5 rounded-full bg-brand-green shadow-[0_0_0_4px_rgba(47,191,113,0.35)]" />
             Live in Gauteng
           </div>
-          <h1 className="text-[clamp(34px,4.4vw,56px)] font-bold leading-[1.08] text-white mb-5">
-            Send it. Skip the trip.<br />
-            Tuma Mina gets it done.
+          <h1 className="text-[clamp(32px,4.4vw,54px)] font-bold leading-[1.1] text-white max-w-[620px] mb-9">
+            Too much on your list?<br />Tuma someone to run it.
           </h1>
-          <p className="text-[17px] text-indigo-50/90 max-w-[440px] mb-8">
-            Post any errand — a delivery, a document, a queue you can't stand in — and a
-            verified runner nearby picks it up, tracked pin to pin, until it's done.
-          </p>
-          <ul className="flex flex-col gap-3 mb-9">
-            {[
-              "Live GPS tracking, from pickup to proof of delivery",
-              "Payment held safely in-app until the job's confirmed",
-              "Every runner verified — ID, bank details, proof of address",
-            ].map((item) => (
-              <li key={item} className="flex items-center gap-3 text-[15px] font-medium text-white">
-                {CHECK}
-                {item}
-              </li>
-            ))}
-          </ul>
-          <div className="flex gap-3.5 flex-wrap">
+
+          {/* Search bar */}
+          <div className="w-full max-w-[620px] flex items-center bg-white rounded-full shadow-lg2 p-2 mb-7 mx-auto">
+            <input
+              type="text"
+              placeholder="What do you need help with?"
+              className="flex-1 bg-transparent border-none outline-none px-4 py-2.5 text-[15px] text-ink placeholder:text-ink-soft"
+            />
+            <button
+              type="button"
+              aria-label="Search tasks"
+              className="w-11 h-11 rounded-full bg-coral text-white flex items-center justify-center flex-shrink-0 hover:bg-coral-dark transition"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="w-[18px] h-[18px]">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M21 21l-4.35-4.35" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Icon filter row — one per Tuma Mina task category */}
+          <div className="flex items-start justify-center gap-7 md:gap-9 overflow-x-auto max-w-full pb-1 mb-9">
+            {taskFilters.map((f, i) => {
+              const Icon = f.icon;
+              const active = i === 0;
+              return (
+                <a
+                  key={f.title}
+                  href="#tasks"
+                  className="flex flex-col items-center gap-2 flex-shrink-0 group"
+                >
+                  <Icon
+                    className={`w-5 h-5 ${active ? "text-white" : "text-indigo-100/70 group-hover:text-white"}`}
+                  />
+                  <span className={`text-[12.5px] font-medium whitespace-nowrap ${active ? "text-white" : "text-indigo-100/70 group-hover:text-white"}`}>
+                    {f.title}
+                  </span>
+                  <span className={`w-full h-[2.5px] rounded-full ${active ? "bg-coral" : "bg-transparent"}`} />
+                </a>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-3.5 flex-wrap justify-center">
             <Link to="/register"><Button variant="primary" size="lg">Post your first task</Button></Link>
             <Link to="/register"><Button variant="ghostLight" size="lg">Become a runner</Button></Link>
           </div>
@@ -137,21 +216,24 @@ export default function Landing() {
           <h2 className="text-[clamp(26px,3vw,36px)]">Popular tasks, priced upfront.</h2>
           <p className="text-ink-soft text-base mt-3">If it needs doing in person, send it to a runner.</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-[1100px] mx-auto">
-          {categories.map((c) => (
-            <div key={c.title} className="bg-white rounded-2xl p-6 border border-line flex items-center gap-3.5 hover:-translate-y-1 hover:shadow-sm2 transition">
-              <div className="w-11 h-11 rounded-xl bg-indigo-950 flex items-center justify-center text-coral flex-shrink-0 font-display font-bold">
-                {c.title.charAt(0)}
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <h5 className="text-[15px]">{c.title}</h5>
-                  <span className="text-[12.5px] font-semibold text-indigo-600 whitespace-nowrap">{c.price}</span>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-[1100px] mx-auto">
+          {popularTasks.map((t) => {
+            const Icon = t.icon;
+            return (
+              <div
+                key={t.title}
+                className="bg-white rounded-2xl overflow-hidden border border-line hover:-translate-y-1 hover:shadow-sm2 transition"
+              >
+                <div className={`aspect-[4/3] flex items-center justify-center ${t.bg}`}>
+                  <Icon className="w-9 h-9 text-white" />
                 </div>
-                <span className="text-[13px] text-ink-soft">{c.body}</span>
+                <div className="p-4">
+                  <h5 className="text-[14.5px] leading-snug mb-1">{t.title}</h5>
+                  <span className="text-[13px] text-ink-soft">{t.price}</span>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -200,42 +282,41 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Runner recruitment */}
+      {/* Runner recruitment — overlay card on the photo, simplified steps */}
       <section id="runners" className="px-[6vw] py-20 bg-lavender-100">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-14 items-center max-w-[1140px] mx-auto">
-          <div>
-            <div className="inline-flex items-center gap-2 mb-4 font-mono text-xs uppercase tracking-wider text-indigo-600 border border-indigo-400 rounded-full px-3.5 py-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
-              Become a runner
-            </div>
-            <h2 className="text-[30px] mb-2.5">Earn on your own schedule, every job verified.</h2>
-            <p className="text-ink-soft text-[15px]">
-              Set your own price per job, or accept the client's budget. Payment sits safely in
-              escrow the moment a job starts, and lands in your wallet the moment it's confirmed done.
-            </p>
-            <ul className="flex flex-col gap-4 mt-6">
-              {[
-                ["Apply in minutes", "Full name, contact number, bank details and proof of address — that's it."],
-                ["Get matched to jobs nearby", "See tasks around you and accept or negotiate the price."],
-                ["Prove it, get paid", "A photo for drop-offs, a PIN for person-to-person — then funds release, or auto-release in 72 hours."],
-              ].map(([title, body], i) => (
-                <li key={title} className="flex gap-3.5 text-sm text-ink-soft">
-                  <span className="font-mono font-semibold text-indigo-600 text-[13px] w-[26px] h-[26px] rounded-full border-[1.5px] border-indigo-400 flex items-center justify-center flex-shrink-0">
-                    0{i + 1}
-                  </span>
-                  <div><b className="block text-ink text-[15px] mb-0.5">{title}</b>{body}</div>
-                </li>
-              ))}
-            </ul>
-            <Link to="/register">
-              <Button variant="dark" size="lg" className="mt-7">Apply as a runner</Button>
-            </Link>
+        <div className="max-w-[640px] mx-auto text-center mb-12">
+          <div className="inline-flex items-center gap-2 mx-auto mb-4 font-mono text-xs uppercase tracking-wider text-indigo-600 border border-indigo-400 rounded-full px-3.5 py-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+            Become a runner
           </div>
+          <h2 className="text-[clamp(26px,3vw,36px)] mb-3">Earn on your own schedule, every job verified.</h2>
+          <p className="text-ink-soft text-base mb-7">
+            Set your own price per job, or accept the client's budget — payment lands in your wallet the moment a job's confirmed done.
+          </p>
+          <Link to="/register">
+            <Button variant="dark" size="lg">Apply as a runner</Button>
+          </Link>
+        </div>
+
+        <div className="relative max-w-[1000px] mx-auto">
           <img
             src="/runner.jpg"
             alt="Tuma Mina runner on the job"
-            className="w-full h-full min-h-[420px] object-cover rounded-3xl"
+            className="w-full h-[300px] md:h-[440px] object-cover rounded-3xl"
           />
+          <div className="relative md:absolute md:left-8 md:bottom-8 mt-[-40px] md:mt-0 mx-6 md:mx-0 bg-white rounded-2xl shadow-lg2 p-7 md:p-8 max-w-[300px]">
+            <h4 className="text-[17px] mb-5">How it works</h4>
+            <ul className="flex flex-col gap-4">
+              {runnerHowItWorks.map((step, i) => (
+                <li key={i} className="flex items-start gap-3">
+                  <span className={`w-7 h-7 rounded-full ${step.dot} text-ink text-[13px] font-semibold flex items-center justify-center flex-shrink-0`}>
+                    {i + 1}
+                  </span>
+                  <span className="text-[14px] text-ink pt-0.5">{step.body}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       </section>
 
