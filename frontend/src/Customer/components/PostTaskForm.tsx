@@ -1,61 +1,128 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
+import { useNow } from "../useNow";
 import Button from "../../components/Button";
-import type { CustomerTask, DeliveryMode, JobType } from "../../types/types";
+import type { CustomerTask, DeliveryMode, JobType, Quote } from "../../types/types";
 import { categoryIcons } from "../categoryIcons";
-import { IconPin } from "../icons";
+import { IconClose, IconPin } from "../icons";
 
 const categories: JobType[] = ["Delivery", "Document", "Queuing", "Shopping", "Errand"];
+const MAX_PHOTOS = 3;
 
 interface PostTaskFormProps {
-  onCreate: (task: CustomerTask) => void;
+  mode?: "create" | "edit";
+  initialTask?: CustomerTask;
+  onSubmit: (task: CustomerTask) => void;
   onCancel: () => void;
 }
 
-export default function PostTaskForm({ onCreate, onCancel }: PostTaskFormProps) {
-  const [category, setCategory] = useState<JobType>("Delivery");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>("location");
-  const [location, setLocation] = useState("");
-  const [deadline, setDeadline] = useState("");
-  const [pricingMode, setPricingMode] = useState<"budget" | "quote">("budget");
-  const [budget, setBudget] = useState("");
-  const [photoName, setPhotoName] = useState("");
+function toLocalDatetimeInput(iso: string) {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export default function PostTaskForm({ mode = "create", initialTask, onSubmit, onCancel }: PostTaskFormProps) {
+  const editing = mode === "edit" && !!initialTask;
+
+  const [category, setCategory] = useState<JobType>(initialTask?.category ?? "Delivery");
+  const [title, setTitle] = useState(initialTask?.title ?? "");
+  const [description, setDescription] = useState(initialTask?.description ?? "");
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(initialTask?.deliveryMode ?? "location");
+  const [location, setLocation] = useState(initialTask?.location ?? "");
+  const [deadline, setDeadline] = useState(initialTask ? toLocalDatetimeInput(initialTask.deadline) : "");
+  const [pricingMode, setPricingMode] = useState<"budget" | "quote">(initialTask?.budget ? "budget" : "quote");
+  const [budget, setBudget] = useState(initialTask?.budget ? String(initialTask.budget) : "");
+  const [photos, setPhotos] = useState<string[]>(initialTask?.referencePhotos ?? []);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const now = useNow();
+
+  function addPhotos(files: FileList | null) {
+    if (!files) return;
+    const room = MAX_PHOTOS - photos.length;
+    const next = Array.from(files)
+      .slice(0, room)
+      .map((f) => URL.createObjectURL(f));
+    if (next.length) setPhotos((p) => [...p, ...next]);
+  }
+
+  function removePhoto(url: string) {
+    setPhotos((p) => p.filter((x) => x !== url));
+  }
+
+  function validate() {
+    const next: Record<string, string> = {};
+    if (!title.trim()) next.title = "Give your task a short title.";
+    if (!location.trim()) next.location = "Let runners know where this is.";
+    if (!deadline) {
+      next.deadline = "Choose when you need this done by.";
+    } else if (new Date(deadline).getTime() <= Date.now()) {
+      next.deadline = "Pick a time in the future.";
+    }
+    if (pricingMode === "budget" && (!budget || Number(budget) <= 0)) {
+      next.budget = "Enter a budget greater than R0.";
+    }
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!title.trim() || !location.trim() || !deadline) return;
+    if (!validate()) return;
+
+    const resolvedBudget = pricingMode === "budget" && budget ? Number(budget) : null;
+
+    if (editing && initialTask) {
+      // Only pre-runner-acceptance fields are editable — status, quotes and
+      // anything already agreed with a runner are left untouched.
+      onSubmit({
+        ...initialTask,
+        title: title.trim(),
+        category,
+        description: description.trim(),
+        deliveryMode,
+        location: location.trim(),
+        deadline: new Date(deadline).toISOString(),
+        budget: resolvedBudget,
+        referencePhotos: photos,
+        pin: deliveryMode === "person" ? initialTask.pin ?? String(Math.floor(1000 + Math.random() * 9000)) : undefined,
+      });
+      return;
+    }
 
     // TODO: POST /api/tasks with { category, title, description, deliveryMode, location,
-    // deadline, budget }. The backend fans this out to nearby runners, who then submit
-    // quotes (or accept the budget outright) — those come back over the task's quotes list.
+    // deadline, budget, referencePhotos }. The backend fans this out to nearby runners, who
+    // then submit quotes (or accept the budget outright) — those come back over quotes[].
     const id = `TM-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newTask: CustomerTask = {
+    const seedPrice = resolvedBudget ?? 95;
+    const quotes: Quote[] = [
+      { id: `${id}-q1`, runnerName: "Thabo M.", runnerRating: 4.8, price: seedPrice, note: "Can start within the hour.", status: "open" },
+      { id: `${id}-q2`, runnerName: "Palesa N.", runnerRating: 4.6, price: Math.max(seedPrice - 10, 20), status: "open" },
+    ];
+    onSubmit({
       id,
       title: title.trim(),
       category,
       description: description.trim(),
       deliveryMode,
       location: location.trim(),
-      deadline,
-      budget: pricingMode === "budget" && budget ? Number(budget) : null,
+      deadline: new Date(deadline).toISOString(),
+      budget: resolvedBudget,
       status: "posted",
-      // Seed data standing in for runners who've already responded — remove once
-      // live quote submissions come back from the runner app.
-      quotes: [
-        { id: `${id}-q1`, runnerName: "Thabo M.", runnerRating: 4.8, price: pricingMode === "budget" && budget ? Number(budget) : 95, note: "Can start within the hour." },
-        { id: `${id}-q2`, runnerName: "Palesa N.", runnerRating: 4.6, price: pricingMode === "budget" && budget ? Number(budget) - 10 : 85 },
-      ],
+      quotes,
+      referencePhotos: photos,
       pin: deliveryMode === "person" ? String(Math.floor(1000 + Math.random() * 9000)) : undefined,
       createdAt: new Date().toISOString(),
-    };
-    onCreate(newTask);
+    });
   }
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-[640px]">
-      <h2 className="text-[24px] mb-1.5">Post a task</h2>
-      <p className="text-ink-soft text-[14px] mb-7">Describe what you need done — runners nearby will accept your budget or send a quote.</p>
+    <form onSubmit={handleSubmit} noValidate className="max-w-[640px]">
+      <h2 className="text-[22px] sm:text-[24px] mb-1.5">{editing ? "Edit task" : "Post a task"}</h2>
+      <p className="text-ink-soft text-[13.5px] sm:text-[14px] mb-6 sm:mb-7">
+        {editing
+          ? "You can update these details until a runner accepts."
+          : "Describe what you need done — runners nearby will accept your budget or send a quote."}
+      </p>
 
       {/* Category */}
       <div className="mb-6">
@@ -81,31 +148,28 @@ export default function PostTaskForm({ onCreate, onCancel }: PostTaskFormProps) 
         </div>
       </div>
 
-      <div className="mb-[18px]">
-        <label className="block text-[13px] font-semibold mb-1.5">Task title</label>
+      <Field label="Task title" error={errors.title}>
         <input
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="e.g. Drop this parcel off in Rosebank"
-          className="w-full px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14.5px] focus:outline-none focus:border-indigo-500"
+          className={inputClass(!!errors.title)}
         />
-      </div>
+      </Field>
 
-      <div className="mb-[18px]">
-        <label className="block text-[13px] font-semibold mb-1.5">Details</label>
+      <Field label="Details">
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={3}
           placeholder="Anything the runner should know — size, fragility, who to hand it to, gate codes..."
-          className="w-full px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14.5px] focus:outline-none focus:border-indigo-500 resize-none"
+          className={`${inputClass(false)} resize-none`}
         />
-      </div>
+      </Field>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 mb-[18px]">
-        <div>
-          <label className="block text-[13px] font-semibold mb-1.5">Location</label>
+        <Field label="Location" error={errors.location} noMarginBottom>
           <div className="relative">
             <IconPin className="w-4 h-4 text-ink-soft absolute left-4 top-1/2 -translate-y-1/2" />
             <input
@@ -113,23 +177,23 @@ export default function PostTaskForm({ onCreate, onCancel }: PostTaskFormProps) 
               value={location}
               onChange={(e) => setLocation(e.target.value)}
               placeholder="Suburb or address"
-              className="w-full pl-[42px] pr-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14.5px] focus:outline-none focus:border-indigo-500"
+              className={`${inputClass(!!errors.location)} pl-[42px]`}
             />
           </div>
-        </div>
-        <div>
-          <label className="block text-[13px] font-semibold mb-1.5">Needed by</label>
+        </Field>
+        <Field label="Needed by" error={errors.deadline} noMarginBottom>
           <input
             type="datetime-local"
             value={deadline}
+            min={toLocalDatetimeInput(new Date(now + 3_600_000).toISOString())}
             onChange={(e) => setDeadline(e.target.value)}
-            className="w-full px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14.5px] focus:outline-none focus:border-indigo-500"
+            className={inputClass(!!errors.deadline)}
           />
-        </div>
+        </Field>
       </div>
 
       {/* Delivery mode */}
-      <div className="mb-[18px]">
+      <div className="mb-[18px] mt-[18px]">
         <label className="block text-[13px] font-semibold mb-2.5">How is this handed off?</label>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <button
@@ -158,7 +222,7 @@ export default function PostTaskForm({ onCreate, onCancel }: PostTaskFormProps) 
       {/* Pricing */}
       <div className="mb-[18px]">
         <label className="block text-[13px] font-semibold mb-2.5">Pricing</label>
-        <div className="flex bg-lavender-100 p-1 rounded-full mb-3 max-w-[360px]">
+        <div className="flex bg-lavender-100 p-1 rounded-full mb-3 max-w-full sm:max-w-[360px]">
           <button
             type="button"
             onClick={() => setPricingMode("budget")}
@@ -179,35 +243,78 @@ export default function PostTaskForm({ onCreate, onCancel }: PostTaskFormProps) 
           </button>
         </div>
         {pricingMode === "budget" && (
-          <input
-            type="number"
-            min={0}
-            value={budget}
-            onChange={(e) => setBudget(e.target.value)}
-            placeholder="R  amount"
-            className="w-full max-w-[220px] px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14.5px] focus:outline-none focus:border-indigo-500"
-          />
+          <>
+            <input
+              type="number"
+              min={1}
+              value={budget}
+              onChange={(e) => setBudget(e.target.value)}
+              placeholder="R  amount"
+              className={`w-full max-w-[220px] ${inputClass(!!errors.budget)}`}
+            />
+            {errors.budget && <p className="text-[12px] text-[#d64545] mt-1">{errors.budget}</p>}
+          </>
         )}
       </div>
 
-      {/* Photo attach — mock, no upload wired up yet */}
+      {/* Photo attach */}
       <div className="mb-7">
-        <label className="block text-[13px] font-semibold mb-1.5">Reference photo (optional)</label>
-        <label className="flex items-center gap-2.5 px-4 py-3 border-[1.5px] border-dashed border-line rounded-xl text-[13.5px] text-ink-soft cursor-pointer hover:border-indigo-400 w-fit">
-          <input
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(e) => setPhotoName(e.target.files?.[0]?.name ?? "")}
-          />
-          {photoName || "Attach a photo"}
+        <label className="block text-[13px] font-semibold mb-1.5">
+          Reference photos <span className="font-normal text-ink-soft">(optional, up to {MAX_PHOTOS})</span>
         </label>
+        <div className="flex flex-wrap gap-3">
+          {photos.map((url) => (
+            <div key={url} className="relative w-20 h-20 rounded-xl overflow-hidden border-[1.5px] border-line flex-shrink-0">
+              <img src={url} alt="Reference" className="w-full h-full object-cover" />
+              <button
+                type="button"
+                onClick={() => removePhoto(url)}
+                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-indigo-950/70 text-white flex items-center justify-center"
+              >
+                <IconClose className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+          {photos.length < MAX_PHOTOS && (
+            <label className="w-20 h-20 flex-shrink-0 flex flex-col items-center justify-center gap-1 border-[1.5px] border-dashed border-line rounded-xl text-[11px] text-ink-soft cursor-pointer hover:border-indigo-400">
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => addPhotos(e.target.files)} />
+              <span className="text-[20px] leading-none">+</span>
+              Add
+            </label>
+          )}
+        </div>
       </div>
 
-      <div className="flex gap-3">
-        <Button type="submit" variant="primary" size="lg">Post task</Button>
-        <Button type="button" variant="ghost" size="lg" onClick={onCancel}>Cancel</Button>
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Button type="submit" variant="primary" size="lg" block>{editing ? "Save changes" : "Post task"}</Button>
+        <Button type="button" variant="ghost" size="lg" block onClick={onCancel}>Cancel</Button>
       </div>
     </form>
+  );
+}
+
+function inputClass(hasError: boolean) {
+  return `w-full px-[15px] py-3 border-[1.5px] rounded-xl text-[14.5px] focus:outline-none focus:border-indigo-500 ${
+    hasError ? "border-[#d64545]" : "border-line"
+  }`;
+}
+
+function Field({
+  label,
+  error,
+  noMarginBottom = false,
+  children,
+}: {
+  label: string;
+  error?: string;
+  noMarginBottom?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className={noMarginBottom ? "" : "mb-[18px]"}>
+      <label className="block text-[13px] font-semibold mb-1.5">{label}</label>
+      {children}
+      {error && <p className="text-[12px] text-[#d64545] mt-1">{error}</p>}
+    </div>
   );
 }

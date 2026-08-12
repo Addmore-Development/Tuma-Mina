@@ -30,7 +30,6 @@ export interface RunnerPin {
 // Delivery proof depends on where the runner is handing the job off:
 // "location"  -> runner uploads a photo as proof (e.g. dropped at a gate/reception)
 // "person"    -> runner enters a PIN given to them by the receiver (Uber/Zulzi-style)
-
 export type DeliveryMode = "location" | "person";
 
 export type CustomerTaskStatus =
@@ -42,12 +41,21 @@ export type CustomerTaskStatus =
   | "disputed" // customer flagged an issue, sent to a supervisor
   | "cancelled";
 
+export interface QuoteOffer {
+  by: "customer" | "runner";
+  price: number;
+  note?: string;
+  at: string; // ISO timestamp
+}
+
 export interface Quote {
   id: string;
   runnerName: string;
   runnerRating: number; // out of 5
-  price: number; // in Rand
+  price: number; // in Rand — the currently standing price, updated as offers go back and forth
   note?: string;
+  status: "open" | "awaiting_runner" | "declined"; // "open" = ready to Accept as-is
+  history?: QuoteOffer[]; // negotiation trail, most recent last
 }
 
 export interface CustomerTask {
@@ -62,11 +70,14 @@ export interface CustomerTask {
   status: CustomerTaskStatus;
   quotes: Quote[];
   acceptedQuote?: Quote;
+  referencePhotos?: string[]; // object URLs / filenames attached when posting
   proofPhotoUrl?: string;
   pin?: string; // only set when deliveryMode === "person"
   deliveredAt?: string; // ISO timestamp — when the runner marked it done
   autoReleaseAt?: string; // deliveredAt + 72h, ISO timestamp
   completedAt?: string;
+  cancelledAt?: string;
+  cancelReason?: string;
   createdAt: string;
   rating?: { stars: number; comment: string };
 }
@@ -78,4 +89,12 @@ export interface WalletTransaction {
   amount: number;
   date: string;
   description: string;
+}
+
+export interface CustomerProfile {
+  name: string;
+  phone: string;
+  email: string;
+  notifyTaskUpdates: boolean;
+  notifyPromotions: boolean;
 }

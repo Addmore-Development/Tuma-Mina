@@ -1,34 +1,39 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Button from "../../components/Button";
 import type { CustomerTask, Quote } from "../../types/types";
 import CustomerStatusBadge from "./CustomerStatusBadge";
-import { IconAlert, IconCamera, IconCheck, IconClock, IconPin, IconStar } from "../icons";
+import ConfirmDialog from "./ConfirmDialog";
+import { IconAlert, IconCamera, IconCheck, IconClock, IconEdit, IconPin, IconStar, IconTrash } from "../icons";
+import { useNow } from "../useNow";
 
 const AUTO_RELEASE_HOURS = 72;
+const COUNTER_ACCEPT_THRESHOLD = 0.85; // runner auto-accepts a counter within 15% of their ask
 
 interface TaskDetailProps {
   task: CustomerTask;
+  balance: number;
   onBack: () => void;
   onUpdate: (task: CustomerTask) => void;
   onOpenRating: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onNavigateToWallet: (suggestedTopUp?: number) => void;
+  onToast: (text: string, tone?: "success" | "error" | "info") => void;
 }
 
-function formatCountdown(target: string) {
-  const diffMs = new Date(target).getTime() - Date.now();
+function formatCountdown(target: string, now: number) {
+  const diffMs = new Date(target).getTime() - now;
   if (diffMs <= 0) return "any moment now";
   const hrs = Math.floor(diffMs / 3_600_000);
   const mins = Math.floor((diffMs % 3_600_000) / 60_000);
   return `${hrs}h ${mins}m`;
 }
 
-export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: TaskDetailProps) {
-  const [, forceTick] = useState(0);
-
-  // Re-render every minute so the auto-release countdown stays accurate.
-  useEffect(() => {
-    const id = setInterval(() => forceTick((n) => n + 1), 60_000);
-    return () => clearInterval(id);
-  }, []);
+export default function TaskDetail({ task, balance, onBack, onUpdate, onOpenRating, onEdit, onDelete, onNavigateToWallet, onToast }: TaskDetailProps) {
+  const [counteringId, setCounteringId] = useState<string | null>(null);
+  const [counterAmount, setCounterAmount] = useState("");
+  const [pendingQuoteIds, setPendingQuoteIds] = useState<Set<string>>(new Set());
+  const [confirmAction, setConfirmAction] = useState<"cancel" | "cancel-refund" | "delete" | null>(null);
 
   const steps = useMemo(
     () => [
@@ -42,11 +47,60 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
   );
   const stepOrder = ["posted", "accepted", "in_progress", "awaiting_confirmation", "completed"];
   const currentStepIndex = task.status === "disputed" || task.status === "cancelled" ? -1 : stepOrder.indexOf(task.status);
+  const now = useNow();
+  const overdue = !["completed", "cancelled", "disputed"].includes(task.status) && new Date(task.deadline).getTime() < now;
+
+  function updateQuote(quoteId: string, patch: Partial<Quote>) {
+    onUpdate({ ...task, quotes: task.quotes.map((q) => (q.id === quoteId ? { ...q, ...patch } : q)) });
+  }
 
   function acceptQuote(quote: Quote) {
+    if (quote.price > balance) {
+      onToast(`You need R${(quote.price - balance).toFixed(2)} more in your wallet to accept this quote.`, "error");
+      return;
+    }
     // TODO: POST /api/tasks/:id/accept-quote — this is also the point the backend
     // should move `quote.price` from the customer's available wallet balance into escrow.
-    onUpdate({ ...task, status: "accepted", acceptedQuote: quote });
+    onUpdate({ ...task, status: "accepted", acceptedQuote: { ...quote, status: "open" } });
+    onToast(`${quote.runnerName} is on the job.`, "success");
+  }
+
+  function startCounter(quote: Quote) {
+    setCounteringId(quote.id);
+    setCounterAmount(String(quote.price));
+  }
+
+  function submitCounter(quote: Quote) {
+    const amount = Number(counterAmount);
+    if (!amount || amount <= 0) {
+      onToast("Enter a valid counter offer.", "error");
+      return;
+    }
+    const now = new Date().toISOString();
+    updateQuote(quote.id, {
+      status: "awaiting_runner",
+      history: [...(quote.history ?? []), { by: "customer", price: amount, at: now }],
+    });
+    setCounteringId(null);
+    setPendingQuoteIds((prev) => new Set(prev).add(quote.id));
+
+    // Dev preview: stands in for the runner's response until a real runner app exists.
+    // TODO: replace with the runner's actual reply coming back over the API/websocket.
+    setTimeout(() => {
+      const accept = amount >= quote.price * COUNTER_ACCEPT_THRESHOLD;
+      const resolvedPrice = accept ? amount : Math.round((quote.price + amount) / 2);
+      updateQuote(quote.id, {
+        price: resolvedPrice,
+        status: "open",
+        history: [...(quote.history ?? []), { by: "customer", price: amount, at: now }, { by: "runner", price: resolvedPrice, at: new Date().toISOString(), note: accept ? "Accepted your offer" : "Countered back" }],
+      });
+      setPendingQuoteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(quote.id);
+        return next;
+      });
+      onToast(accept ? `${quote.runnerName} accepted your offer of R${amount}.` : `${quote.runnerName} countered at R${resolvedPrice}.`, "info");
+    }, 1800);
   }
 
   // Dev-only helpers standing in for actions that, in production, come from the runner's
@@ -71,12 +125,33 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
     // TODO: POST /api/tasks/:id/approve — releases the held amount to the runner's
     // payout balance and closes out the escrow hold.
     onUpdate({ ...task, status: "completed", completedAt: new Date().toISOString() });
+    onToast("Payment released. Task complete!", "success");
     onOpenRating();
   }
 
   function raiseDispute() {
     // TODO: POST /api/tasks/:id/dispute — routes this to a supervisor for review.
     onUpdate({ ...task, status: "disputed" });
+    onToast("Sent to a supervisor for review.", "info");
+  }
+
+  function confirmCancel() {
+    onUpdate({ ...task, status: "cancelled", cancelledAt: new Date().toISOString(), cancelReason: "Cancelled before a runner was assigned" });
+    onToast("Task cancelled.", "success");
+    setConfirmAction(null);
+  }
+
+  function confirmCancelWithRefund() {
+    // Funds are already held in escrow at this point, so this needs a supervisor
+    // to approve the refund rather than releasing it automatically.
+    onUpdate({ ...task, status: "disputed", cancelReason: "Customer requested cancellation — refund pending review" });
+    onToast("Cancellation requested — a supervisor will review your refund.", "info");
+    setConfirmAction(null);
+  }
+
+  function confirmDelete() {
+    onDelete();
+    setConfirmAction(null);
   }
 
   return (
@@ -85,9 +160,16 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
         ← Back to my tasks
       </button>
 
-      <div className="flex items-start justify-between gap-4 mb-1.5">
-        <h2 className="text-[24px]">{task.title}</h2>
-        <CustomerStatusBadge status={task.status} />
+      <div className="flex items-start justify-between gap-4 mb-1.5 flex-wrap">
+        <h2 className="text-[22px] sm:text-[24px] break-words">{task.title}</h2>
+        <div className="flex items-center gap-2 flex-wrap">
+          {overdue && (
+            <span className="inline-flex items-center gap-1.5 px-[11px] py-[5px] rounded-full text-[11.5px] font-semibold bg-[#fdeaea] text-[#a83232] whitespace-nowrap">
+              <IconAlert className="w-3.5 h-3.5" /> Overdue
+            </span>
+          )}
+          <CustomerStatusBadge status={task.status} />
+        </div>
       </div>
       <p className="text-ink-soft text-[13.5px] mb-6">
         {task.id} · {task.category} · Needed by {new Date(task.deadline).toLocaleString()}
@@ -95,9 +177,9 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
 
       {/* Status stepper */}
       {currentStepIndex >= 0 && (
-        <div className="flex items-center mb-8">
+        <div className="flex items-center mb-8 overflow-x-auto">
           {steps.map((s, i) => (
-            <div key={s.key} className="flex items-center flex-1 last:flex-none">
+            <div key={s.key} className="flex items-center flex-1 last:flex-none min-w-[64px]">
               <div className="flex flex-col items-center gap-1.5">
                 <div
                   className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0 ${
@@ -119,7 +201,16 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
       {task.status === "disputed" && (
         <div className="flex items-start gap-3 bg-[#fdeaea] text-[#a83232] p-4 rounded-xl mb-6">
           <IconAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
-          <p className="text-[13.5px]">This task has been flagged and sent to a supervisor for review. We'll update the status here once it's resolved.</p>
+          <p className="text-[13.5px]">
+            {task.cancelReason ?? "This task has been flagged and sent to a supervisor for review."} We'll update the status here once it's resolved.
+          </p>
+        </div>
+      )}
+
+      {task.status === "cancelled" && (
+        <div className="flex items-start gap-3 bg-[#f1f1f5] text-ink-soft p-4 rounded-xl mb-6">
+          <IconAlert className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <p className="text-[13.5px]">{task.cancelReason ?? "This task was cancelled."}</p>
         </div>
       )}
 
@@ -132,34 +223,91 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
             </div>
           )}
 
-          {/* Quotes / accept */}
+          {!!task.referencePhotos?.length && (
+            <div className="mb-6">
+              <h3 className="text-[13px] font-semibold mb-2.5">Reference photos</h3>
+              <div className="flex flex-wrap gap-3">
+                {task.referencePhotos.map((url) => (
+                  <img key={url} src={url} alt="Reference" className="w-20 h-20 rounded-xl object-cover border-[1.5px] border-line" />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Quotes / accept / negotiate */}
           {task.status === "posted" && (
             <div className="mb-6">
               <h3 className="text-[13px] font-semibold mb-2.5">
                 {task.quotes.length ? "Quotes from nearby runners" : "Waiting on quotes from nearby runners…"}
               </h3>
               <div className="flex flex-col gap-2.5">
-                {task.quotes.map((q) => (
-                  <div key={q.id} className="flex items-center justify-between p-3.5 border-[1.5px] border-line rounded-xl">
-                    <div>
-                      <p className="text-[13.5px] font-semibold">{q.runnerName}</p>
-                      <p className="text-[12px] text-ink-soft flex items-center gap-1">
-                        <IconStar className="w-3 h-3" filled /> {q.runnerRating.toFixed(1)}
-                        {q.note ? ` · ${q.note}` : ""}
-                      </p>
+                {task.quotes.map((q) => {
+                  const insufficient = q.price > balance;
+                  const isCountering = counteringId === q.id;
+                  const isPending = pendingQuoteIds.has(q.id);
+                  return (
+                    <div key={q.id} className="p-3.5 border-[1.5px] border-line rounded-xl">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div>
+                          <p className="text-[13.5px] font-semibold">{q.runnerName}</p>
+                          <p className="text-[12px] text-ink-soft flex items-center gap-1">
+                            <IconStar className="w-3 h-3" filled /> {q.runnerRating.toFixed(1)}
+                            {q.note ? ` · ${q.note}` : ""}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3 flex-shrink-0">
+                          <span className="text-[15px] font-bold">R{q.price}</span>
+                          {!isCountering && !isPending && (
+                            <>
+                              <Button size="md" variant="ghost" onClick={() => startCounter(q)}>Counter</Button>
+                              <Button size="md" onClick={() => acceptQuote(q)}>Accept</Button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {isPending && (
+                        <p className="text-[12.5px] text-ink-soft mt-2.5 flex items-center gap-1.5">
+                          <IconClock className="w-3.5 h-3.5" /> Waiting on {q.runnerName} to respond to your offer…
+                        </p>
+                      )}
+
+                      {isCountering && (
+                        <div className="mt-3 flex items-center gap-2.5 flex-wrap">
+                          <input
+                            type="number"
+                            min={1}
+                            autoFocus
+                            value={counterAmount}
+                            onChange={(e) => setCounterAmount(e.target.value)}
+                            className="w-[120px] px-3 py-2 border-[1.5px] border-line rounded-lg text-[14px] focus:outline-none focus:border-indigo-500"
+                          />
+                          <Button size="md" onClick={() => submitCounter(q)}>Send offer</Button>
+                          <Button size="md" variant="ghost" onClick={() => setCounteringId(null)}>Cancel</Button>
+                        </div>
+                      )}
+
+                      {insufficient && !isCountering && !isPending && (
+                        <div className="mt-2.5 flex items-center gap-2 text-[12.5px] text-[#a83232]">
+                          <IconAlert className="w-3.5 h-3.5 flex-shrink-0" />
+                          Not enough in your wallet.
+                          <button onClick={() => onNavigateToWallet(q.price - balance)} className="underline font-semibold">Add R{(q.price - balance).toFixed(2)}</button>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <span className="text-[15px] font-bold">R{q.price}</span>
-                      <Button size="md" onClick={() => acceptQuote(q)}>Accept</Button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-3 mt-4">
+                <Button size="md" variant="ghost" onClick={onEdit}><IconEdit className="w-3.5 h-3.5" /> Edit task</Button>
+                <Button size="md" variant="ghost" onClick={() => setConfirmAction("cancel")} className="!text-[#a83232] hover:!border-[#a83232]">Cancel task</Button>
               </div>
             </div>
           )}
 
           {task.acceptedQuote && task.status !== "posted" && (
-            <div className="mb-6 p-3.5 rounded-xl bg-lavender-100 flex items-center justify-between">
+            <div className="mb-6 p-3.5 rounded-xl bg-lavender-100 flex items-center justify-between flex-wrap gap-2">
               <div>
                 <p className="text-[13px] text-ink-soft">Runner assigned</p>
                 <p className="text-[14.5px] font-semibold">{task.acceptedQuote.runnerName}</p>
@@ -168,7 +316,7 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
             </div>
           )}
 
-          {task.deliveryMode === "person" && task.pin && task.status !== "posted" && task.status !== "completed" && (
+          {task.deliveryMode === "person" && task.pin && task.status !== "posted" && task.status !== "completed" && task.status !== "cancelled" && (
             <div className="mb-6 p-3.5 rounded-xl border-[1.5px] border-dashed border-line">
               <p className="text-[13px] font-semibold mb-1 flex items-center gap-1.5"><IconPin className="w-4 h-4" /> Hand-off PIN</p>
               <p className="text-[12.5px] text-ink-soft mb-2">Give this PIN to the receiver — the runner enters it on delivery to confirm the hand-off.</p>
@@ -176,9 +324,16 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
             </div>
           )}
 
-          {task.status === "in_progress" && (
-            <div className="mb-6 flex items-center gap-2.5 text-[13.5px] text-ink-soft">
-              <IconClock className="w-4 h-4" /> Your runner is on the job.
+          {(task.status === "accepted" || task.status === "in_progress") && (
+            <div className="mb-6">
+              {task.status === "in_progress" && (
+                <div className="flex items-center gap-2.5 text-[13.5px] text-ink-soft mb-3">
+                  <IconClock className="w-4 h-4" /> Your runner is on the job.
+                </div>
+              )}
+              <Button size="md" variant="ghost" onClick={() => setConfirmAction("cancel-refund")} className="!text-[#a83232] hover:!border-[#a83232]">
+                Cancel task
+              </Button>
             </div>
           )}
 
@@ -197,11 +352,11 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
 
               {task.autoReleaseAt && (
                 <p className="text-[12.5px] text-ink-soft mb-4">
-                  If we don't hear from you, payment auto-releases to the runner in <strong>{formatCountdown(task.autoReleaseAt)}</strong>.
+                  If we don't hear from you, payment auto-releases to the runner in <strong>{formatCountdown(task.autoReleaseAt, now)}</strong>.
                 </p>
               )}
 
-              <div className="flex gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <Button variant="primary" onClick={approveAndRelease}>Approve &amp; release payment</Button>
                 <Button variant="ghost" onClick={raiseDispute}>Something's wrong</Button>
               </div>
@@ -209,11 +364,23 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
           )}
 
           {task.status === "completed" && (
-            <div className="mb-6 flex items-center gap-2.5 p-3.5 rounded-xl bg-[#e9faf1] text-[#1f9d5c] text-[13.5px]">
+            <div className="mb-6 flex items-center gap-2.5 p-3.5 rounded-xl bg-[#e9faf1] text-[#1f9d5c] text-[13.5px] flex-wrap">
               <IconCheck className="w-5 h-5 flex-shrink-0" /> Payment released. This task is complete.
               {!task.rating && (
                 <button onClick={onOpenRating} className="ml-auto underline font-semibold">Rate your runner</button>
               )}
+            </div>
+          )}
+
+          {task.rating && (
+            <div className="mb-6 p-3.5 rounded-xl border-[1.5px] border-line">
+              <p className="text-[13px] font-semibold mb-1.5">Your rating</p>
+              <div className="flex gap-0.5 mb-1.5">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <IconStar key={n} className="w-4 h-4 text-coral" filled={n <= task.rating!.stars} />
+                ))}
+              </div>
+              {task.rating.comment && <p className="text-[13px] text-ink-soft">{task.rating.comment}</p>}
             </div>
           )}
 
@@ -224,6 +391,15 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
               {task.status === "accepted" && <Button size="md" variant="ghost" onClick={simulateInProgress}>Simulate: runner starts the job</Button>}
               {task.status === "in_progress" && <Button size="md" variant="ghost" onClick={simulateDelivered}>Simulate: runner marks delivered</Button>}
             </div>
+          )}
+
+          {["completed", "cancelled", "disputed"].includes(task.status) && (
+            <button
+              onClick={() => setConfirmAction("delete")}
+              className="mt-2 text-[12.5px] text-ink-soft hover:text-[#a83232] flex items-center gap-1.5"
+            >
+              <IconTrash className="w-3.5 h-3.5" /> Remove from history
+            </button>
           )}
         </div>
 
@@ -237,6 +413,37 @@ export default function TaskDetail({ task, onBack, onUpdate, onOpenRating }: Tas
           <p className="text-[13.5px] font-medium">{task.budget ? `R${task.budget}` : "Open to quotes"}</p>
         </div>
       </div>
+
+      {confirmAction === "cancel" && (
+        <ConfirmDialog
+          title="Cancel this task?"
+          description="No runner has been assigned yet, so nothing has been charged. This can't be undone."
+          confirmLabel="Cancel task"
+          tone="danger"
+          onConfirm={confirmCancel}
+          onClose={() => setConfirmAction(null)}
+        />
+      )}
+      {confirmAction === "cancel-refund" && (
+        <ConfirmDialog
+          title="Cancel and request a refund?"
+          description={`R${task.acceptedQuote?.price ?? 0} is currently held in escrow for this task. Cancelling now sends it to a supervisor to review and refund.`}
+          confirmLabel="Request cancellation"
+          tone="danger"
+          onConfirm={confirmCancelWithRefund}
+          onClose={() => setConfirmAction(null)}
+        />
+      )}
+      {confirmAction === "delete" && (
+        <ConfirmDialog
+          title="Remove from history?"
+          description="This will remove the task from your list. This can't be undone."
+          confirmLabel="Remove"
+          tone="danger"
+          onConfirm={confirmDelete}
+          onClose={() => setConfirmAction(null)}
+        />
+      )}
     </div>
   );
 }
