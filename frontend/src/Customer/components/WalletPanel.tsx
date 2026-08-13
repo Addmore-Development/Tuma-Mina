@@ -2,6 +2,8 @@ import { useState, type FormEvent } from "react";
 import Button from "../../components/Button";
 import type { WalletTransaction } from "../../types/types";
 import { IconWallet } from "../icons";
+import { useNow } from "../useNow";
+import { formatRelativeTime } from "../formatRelativeTime";
 
 const QUICK_AMOUNTS = [100, 250, 500];
 
@@ -14,6 +16,7 @@ interface WalletPanelProps {
 }
 
 export default function WalletPanel({ balance, held, transactions, onTopUp, suggestedTopUp }: WalletPanelProps) {
+  const now = useNow();
   const [showTopUp, setShowTopUp] = useState(!!suggestedTopUp);
   const [amount, setAmount] = useState(suggestedTopUp ? String(Math.ceil(suggestedTopUp)) : "");
   const [error, setError] = useState("");
@@ -111,7 +114,7 @@ export default function WalletPanel({ balance, held, transactions, onTopUp, sugg
               <div key={t.id} className="flex items-center justify-between p-3.5 border-[1.5px] border-line rounded-xl gap-3">
                 <div className="min-w-0">
                   <p className="text-[13.5px] font-medium truncate">{t.description}</p>
-                  <p className="text-[12px] text-ink-soft">{new Date(t.date).toLocaleString()}</p>
+                  <p className="text-[12px] text-ink-soft">{formatRelativeTime(t.date, now)}</p>
                 </div>
                 <span
                   className={`text-[14.5px] font-bold flex-shrink-0 ${

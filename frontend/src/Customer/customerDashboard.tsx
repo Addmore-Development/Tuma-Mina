@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import Logo from "../components/Logo";
 import type { CustomerProfile, CustomerTask, WalletTransaction } from "../types/types";
@@ -10,8 +10,23 @@ import RateRunnerModal from "./components/RateRunnerModal";
 import SettingsPanel from "./components/SettingsPanel";
 import ToastStack, { type ToastMessage } from "./components/Toast";
 import { categoryIcons } from "./categoryIcons";
-import { IconAlert, IconClock, IconGrid, IconMenu, IconPackage, IconPlus, IconUser, IconWallet } from "./icons";
+import { IconAlert, IconBell, IconClock, IconGrid, IconMenu, IconPackage, IconPlus, IconSearch, IconUser, IconWallet } from "./icons";
 import { useNow } from "./useNow";
+import { formatRelativeTime } from "./formatRelativeTime";
+
+interface SavedLocation {
+  label: string;
+  address: string;
+}
+
+interface NotificationItem {
+  id: string;
+  text: string;
+  tone: ToastMessage["tone"];
+  at: string;
+  read: boolean;
+  taskId?: string;
+}
 
 // TODO: replace with GET /api/customer/tasks on mount, and swap the useState calls
 // below for the corresponding POST/PATCH calls as noted in each component.
@@ -93,8 +108,11 @@ const initialProfile: CustomerProfile = {
   notifyPromotions: false,
 };
 
+const initialSavedLocations: SavedLocation[] = [{ label: "Home", address: "Rustenburg CBD" }];
+
 type View = "overview" | "post" | "tasks" | "task-detail" | "wallet" | "settings";
 type TaskFilter = "all" | "active" | "closed";
+type TaskSort = "newest" | "deadline";
 
 const CLOSED_STATUSES: CustomerTask["status"][] = ["completed", "cancelled", "disputed"];
 
@@ -103,18 +121,26 @@ export default function CustomerDashboard() {
   const [transactions, setTransactions] = useState<WalletTransaction[]>(initialTransactions);
   const [balance, setBalance] = useState(180);
   const [profile, setProfile] = useState<CustomerProfile>(initialProfile);
+  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>(initialSavedLocations);
   const [view, setView] = useState<View>("overview");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [duplicateSeed, setDuplicateSeed] = useState<CustomerTask | null>(null);
   const [ratingTaskId, setRatingTaskId] = useState<string | null>(null);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
+  const [taskSort, setTaskSort] = useState<TaskSort>("newest");
+  const [taskSearch, setTaskSearch] = useState("");
   const [walletTopUpSuggestion, setWalletTopUpSuggestion] = useState<number | undefined>(undefined);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const idCounter = useRef(0);
 
   const activeTask = useMemo(() => tasks.find((t) => t.id === activeTaskId) ?? null, [tasks, activeTaskId]);
   const editingTask = useMemo(() => tasks.find((t) => t.id === editingTaskId) ?? null, [tasks, editingTaskId]);
   const ratingTask = useMemo(() => tasks.find((t) => t.id === ratingTaskId) ?? null, [tasks, ratingTaskId]);
+  const unreadCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
 
   const held = useMemo(
     () => tasks.filter((t) => ["accepted", "in_progress", "awaiting_confirmation"].includes(t.status)).reduce((sum, t) => sum + (t.acceptedQuote?.price ?? 0), 0),
@@ -128,14 +154,22 @@ export default function CustomerDashboard() {
     [tasks, now]
   );
   const filteredTasks = useMemo(() => {
-    if (taskFilter === "active") return tasks.filter((t) => !CLOSED_STATUSES.includes(t.status));
-    if (taskFilter === "closed") return tasks.filter((t) => CLOSED_STATUSES.includes(t.status));
-    return tasks;
-  }, [tasks, taskFilter]);
+    let list = tasks;
+    if (taskFilter === "active") list = list.filter((t) => !CLOSED_STATUSES.includes(t.status));
+    if (taskFilter === "closed") list = list.filter((t) => CLOSED_STATUSES.includes(t.status));
+    const q = taskSearch.trim().toLowerCase();
+    if (q) list = list.filter((t) => t.title.toLowerCase().includes(q) || t.id.toLowerCase().includes(q));
+    list = [...list];
+    if (taskSort === "deadline") list.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+    else list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return list;
+  }, [tasks, taskFilter, taskSearch, taskSort]);
 
-  function pushToast(text: string, tone: ToastMessage["tone"] = "success") {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  function pushToast(text: string, tone: ToastMessage["tone"] = "success", taskId?: string) {
+    idCounter.current += 1;
+    const id = `note-${idCounter.current}`;
     setToasts((prev) => [...prev, { id, text, tone }]);
+    setNotifications((prev) => [{ id, text, tone, at: new Date(now).toISOString(), read: false, taskId }, ...prev].slice(0, 30));
   }
   function dismissToast(id: string) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -154,28 +188,45 @@ export default function CustomerDashboard() {
 
   function startPostTask() {
     setEditingTaskId(null);
+    setDuplicateSeed(null);
     setView("post");
     setMobileNavOpen(false);
   }
 
   function startEditTask(id: string) {
     setEditingTaskId(id);
+    setDuplicateSeed(null);
+    setView("post");
+    setMobileNavOpen(false);
+  }
+
+  function startDuplicateTask(task: CustomerTask) {
+    setEditingTaskId(null);
+    setDuplicateSeed({ ...task, deadline: "" });
     setView("post");
     setMobileNavOpen(false);
   }
 
   function handlePostSubmit(task: CustomerTask) {
-    const isEdit = tasks.some((t) => t.id === task.id) && editingTaskId === task.id;
+    const isEdit = !!editingTaskId && tasks.some((t) => t.id === task.id) && editingTaskId === task.id;
     if (isEdit) {
       setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
-      pushToast("Task updated.", "success");
+      pushToast("Task updated.", "success", task.id);
       setEditingTaskId(null);
       openTask(task.id);
     } else {
       setTasks((prev) => [task, ...prev]);
-      pushToast("Task posted — nearby runners have been notified.", "success");
+      setDuplicateSeed(null);
+      pushToast("Task posted — nearby runners have been notified.", "success", task.id);
       setView("tasks");
     }
+  }
+
+  function handlePostCancel() {
+    const hadPrefill = !!(editingTaskId || duplicateSeed);
+    setEditingTaskId(null);
+    setDuplicateSeed(null);
+    setView(hadPrefill ? "task-detail" : "overview");
   }
 
   function handleUpdateTask(updated: CustomerTask) {
@@ -202,6 +253,16 @@ export default function CustomerDashboard() {
       }
       return next;
     });
+  }
+
+  function approveTask(id: string) {
+    const task = tasks.find((t) => t.id === id);
+    if (!task) return;
+    // TODO: POST /api/tasks/:id/approve — releases the held amount to the runner's
+    // payout balance and closes out the escrow hold.
+    handleUpdateTask({ ...task, status: "completed", completedAt: new Date().toISOString() });
+    pushToast("Payment released. Task complete!", "success", id);
+    setRatingTaskId(id);
   }
 
   function handleDeleteTask(id: string) {
@@ -234,6 +295,23 @@ export default function CustomerDashboard() {
     pushToast("Settings saved.", "success");
   }
 
+  function handleSaveLocation(loc: SavedLocation) {
+    setSavedLocations((prev) => (prev.some((l) => l.label.toLowerCase() === loc.label.toLowerCase()) ? prev : [...prev, loc]));
+    pushToast(`Saved "${loc.label}" for next time.`, "success");
+  }
+
+  function handleNotifSelect(n: NotificationItem) {
+    setNotifPanelOpen(false);
+    if (n.taskId && tasks.some((t) => t.id === n.taskId)) openTask(n.taskId);
+  }
+
+  function toggleNotifPanel() {
+    setNotifPanelOpen((open) => {
+      if (!open) setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+      return !open;
+    });
+  }
+
   const navItems: { key: View; label: string; icon: (p: { className?: string }) => ReactNode }[] = [
     { key: "overview", label: "Overview", icon: IconGrid },
     { key: "post", label: "Post a task", icon: IconPlus },
@@ -250,9 +328,21 @@ export default function CustomerDashboard() {
           <IconMenu className="w-6 h-6" />
         </button>
         <Logo light />
-        <button onClick={() => goTo("wallet")} className="text-[12.5px] font-semibold bg-white/10 px-2.5 py-1.5 rounded-full">
-          R{balance.toFixed(0)}
-        </button>
+        <div className="flex items-center gap-2">
+          <NotificationBell
+            light
+            notifications={notifications}
+            unreadCount={unreadCount}
+            open={notifPanelOpen}
+            onToggle={toggleNotifPanel}
+            onClose={() => setNotifPanelOpen(false)}
+            onSelect={handleNotifSelect}
+            now={now}
+          />
+          <button onClick={() => goTo("wallet")} className="text-[12.5px] font-semibold bg-white/10 px-2.5 py-1.5 rounded-full">
+            R{balance.toFixed(0)}
+          </button>
+        </div>
       </div>
 
       {/* Mobile off-canvas nav */}
@@ -296,113 +386,161 @@ export default function CustomerDashboard() {
       </aside>
 
       {/* Main */}
-      <main className="px-4 sm:px-6 md:px-9 py-6 md:py-7 pb-24 md:pb-7">
-        {view === "overview" && (
-          <>
-            <div className="flex justify-between items-center flex-wrap gap-4 mb-6 md:mb-7">
-              <div>
-                <h1 className="text-xl sm:text-2xl">Good to see you, {profile.name.split(" ")[0]}</h1>
-                <p className="text-ink-soft text-[13px] sm:text-[13.5px] mt-1">
-                  {activeTasks.length} task{activeTasks.length === 1 ? "" : "s"} on the go right now
-                </p>
-              </div>
-              <button onClick={startPostTask} className="hidden sm:inline-flex items-center gap-1.5 bg-coral text-white hover:bg-coral-dark rounded-full font-semibold px-6 py-3 text-[14.5px]">
-                <IconPlus className="w-4 h-4" /> Post a task
-              </button>
-            </div>
+      <div className="md:flex md:flex-col md:min-h-screen md:min-w-0">
+        {/* Desktop utility bar — persistent quick actions, reachable from every view */}
+        <div className="hidden md:flex items-center justify-end gap-2.5 px-9 pt-5">
+          <NotificationBell
+            notifications={notifications}
+            unreadCount={unreadCount}
+            open={notifPanelOpen}
+            onToggle={toggleNotifPanel}
+            onClose={() => setNotifPanelOpen(false)}
+            onSelect={handleNotifSelect}
+            now={now}
+          />
+          {view !== "post" && (
+            <button onClick={startPostTask} className="inline-flex items-center gap-1.5 bg-coral text-white hover:bg-coral-dark rounded-full font-semibold px-5 py-2.5 text-[13.5px]">
+              <IconPlus className="w-4 h-4" /> Post a task
+            </button>
+          )}
+        </div>
 
-            {tasks.length === 0 ? (
-              <EmptyState onPost={startPostTask} />
-            ) : (
-              <>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 md:mb-7">
-                  <StatCard label="Active tasks" value={String(activeTasks.length)} icon={<IconPackage className="w-[17px] h-[17px] text-indigo-600" />} iconBg="#eeeefc" />
-                  <StatCard label="Awaiting confirmation" value={String(needsConfirmation.length)} icon={<IconClock className="w-[17px] h-[17px] text-coral-dark" />} iconBg="#fff2ea" />
-                  <StatCard label="Overdue" value={String(overdueTasks.length)} icon={<IconAlert className="w-[17px] h-[17px] text-[#d64545]" />} iconBg="#fdeaea" warn={overdueTasks.length > 0} />
-                  <StatCard label="In escrow" value={`R${held}`} icon={<IconWallet className="w-[17px] h-[17px] text-[#1f9d5c]" />} iconBg="#e9faf1" />
+        <main className="px-4 sm:px-6 md:px-9 py-6 md:py-5 pb-24 md:pb-9 md:flex-1">
+          {view === "overview" && (
+            <>
+              <div className="flex justify-between items-center flex-wrap gap-4 mb-4">
+                <div>
+                  <h1 className="text-xl sm:text-2xl">Good to see you, {profile.name.split(" ")[0]}</h1>
+                  <p className="text-ink-soft text-[13px] sm:text-[13.5px] mt-1">
+                    {activeTasks.length} task{activeTasks.length === 1 ? "" : "s"} on the go right now
+                  </p>
                 </div>
+                <button onClick={startPostTask} className="sm:hidden inline-flex items-center gap-1.5 bg-coral text-white hover:bg-coral-dark rounded-full font-semibold px-6 py-3 text-[14.5px]">
+                  <IconPlus className="w-4 h-4" /> Post a task
+                </button>
+              </div>
 
-                <div className="bg-white rounded-2xl border border-line overflow-hidden">
-                  <div className="flex justify-between items-center px-5 py-4 border-b border-line">
-                    <h3 className="text-[15.5px]">Recent tasks</h3>
-                    <button onClick={() => goTo("tasks")} className="text-[13px] text-indigo-600 font-semibold">View all →</button>
+              {tasks.length > 0 && balance < 100 && (
+                <div className="flex items-center gap-3 bg-[#fff4e0] text-[#a86a1a] p-3.5 rounded-xl mb-5 flex-wrap">
+                  <IconAlert className="w-4 h-4 flex-shrink-0" />
+                  <p className="text-[13px] flex-1 min-w-[180px]">Your wallet balance is low — top up to keep accepting quotes without interruption.</p>
+                  <button onClick={() => handleNavigateToWallet()} className="text-[12.5px] font-semibold underline">Top up</button>
+                </div>
+              )}
+
+              {tasks.length === 0 ? (
+                <EmptyState onPost={startPostTask} />
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 md:mb-7">
+                    <StatCard label="Active tasks" value={String(activeTasks.length)} icon={<IconPackage className="w-[17px] h-[17px] text-indigo-600" />} iconBg="#eeeefc" />
+                    <StatCard label="Awaiting confirmation" value={String(needsConfirmation.length)} icon={<IconClock className="w-[17px] h-[17px] text-coral-dark" />} iconBg="#fff2ea" />
+                    <StatCard label="Overdue" value={String(overdueTasks.length)} icon={<IconAlert className="w-[17px] h-[17px] text-[#d64545]" />} iconBg="#fdeaea" warn={overdueTasks.length > 0} />
+                    <StatCard label="In escrow" value={`R${held}`} icon={<IconWallet className="w-[17px] h-[17px] text-[#1f9d5c]" />} iconBg="#e9faf1" />
                   </div>
-                  {tasks.slice(0, 4).map((t) => (
-                    <TaskRow key={t.id} task={t} onClick={() => openTask(t.id)} />
+
+                  <div className="bg-white rounded-2xl border border-line overflow-hidden">
+                    <div className="flex justify-between items-center px-5 py-4 border-b border-line">
+                      <h3 className="text-[15.5px]">Recent tasks</h3>
+                      <button onClick={() => goTo("tasks")} className="text-[13px] text-indigo-600 font-semibold">View all →</button>
+                    </div>
+                    {tasks.slice(0, 4).map((t) => (
+                      <TaskRow key={t.id} task={t} now={now} onClick={() => openTask(t.id)} onQuickApprove={() => approveTask(t.id)} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {view === "post" && (
+            <PostTaskForm
+              mode={editingTask ? "edit" : "create"}
+              initialTask={editingTask ?? duplicateSeed ?? undefined}
+              savedLocations={savedLocations}
+              onSaveLocation={handleSaveLocation}
+              onSubmit={handlePostSubmit}
+              onCancel={handlePostCancel}
+            />
+          )}
+
+          {view === "tasks" && (
+            <>
+              <div className="flex justify-between items-center flex-wrap gap-4 mb-5">
+                <h1 className="text-xl sm:text-2xl">My tasks</h1>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
+                <div className="flex bg-white border border-line p-1 rounded-full w-fit">
+                  {(["all", "active", "closed"] as TaskFilter[]).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setTaskFilter(f)}
+                      className={`px-4 py-1.5 rounded-full text-[13px] font-semibold capitalize transition ${
+                        taskFilter === f ? "bg-indigo-950 text-white" : "text-ink-soft hover:text-indigo-600"
+                      }`}
+                    >
+                      {f}
+                    </button>
                   ))}
                 </div>
-              </>
-            )}
-          </>
-        )}
 
-        {view === "post" && (
-          <PostTaskForm
-            mode={editingTask ? "edit" : "create"}
-            initialTask={editingTask ?? undefined}
-            onSubmit={handlePostSubmit}
-            onCancel={() => {
-              setEditingTaskId(null);
-              setView(editingTask ? "task-detail" : "overview");
-            }}
-          />
-        )}
+                <div className="relative flex-1 min-w-[160px] max-w-[280px]">
+                  <IconSearch className="w-4 h-4 text-ink-soft absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={taskSearch}
+                    onChange={(e) => setTaskSearch(e.target.value)}
+                    placeholder="Search by title or ID"
+                    className="w-full pl-10 pr-3 py-2 bg-white border border-line rounded-full text-[13px] focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
 
-        {view === "tasks" && (
-          <>
-            <div className="flex justify-between items-center flex-wrap gap-4 mb-5">
-              <h1 className="text-xl sm:text-2xl">My tasks</h1>
-              <button onClick={startPostTask} className="hidden sm:inline-flex items-center gap-1.5 bg-coral text-white hover:bg-coral-dark rounded-full font-semibold px-6 py-3 text-[14.5px]">
-                <IconPlus className="w-4 h-4" /> Post a task
-              </button>
-            </div>
-
-            <div className="flex bg-white border border-line p-1 rounded-full mb-5 w-fit">
-              {(["all", "active", "closed"] as TaskFilter[]).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setTaskFilter(f)}
-                  className={`px-4 py-1.5 rounded-full text-[13px] font-semibold capitalize transition ${
-                    taskFilter === f ? "bg-indigo-950 text-white" : "text-ink-soft hover:text-indigo-600"
-                  }`}
+                <select
+                  value={taskSort}
+                  onChange={(e) => setTaskSort(e.target.value as TaskSort)}
+                  className="bg-white border border-line rounded-full px-3.5 py-2 text-[13px] font-medium text-ink-soft focus:outline-none focus:border-indigo-500 w-fit"
                 >
-                  {f}
-                </button>
-              ))}
-            </div>
+                  <option value="newest">Newest first</option>
+                  <option value="deadline">By deadline</option>
+                </select>
+              </div>
 
-            <div className="bg-white rounded-2xl border border-line overflow-hidden">
-              {tasks.length === 0 ? (
-                <div className="p-6"><EmptyState onPost={startPostTask} compact /></div>
-              ) : filteredTasks.length === 0 ? (
-                <p className="p-6 text-[13.5px] text-ink-soft">No tasks in this view.</p>
-              ) : (
-                filteredTasks.map((t) => <TaskRow key={t.id} task={t} onClick={() => openTask(t.id)} />)
-              )}
-            </div>
-          </>
-        )}
+              <div className="bg-white rounded-2xl border border-line overflow-hidden">
+                {tasks.length === 0 ? (
+                  <div className="p-6"><EmptyState onPost={startPostTask} compact /></div>
+                ) : filteredTasks.length === 0 ? (
+                  <p className="p-6 text-[13.5px] text-ink-soft">No tasks match that search.</p>
+                ) : (
+                  filteredTasks.map((t) => <TaskRow key={t.id} task={t} now={now} onClick={() => openTask(t.id)} onQuickApprove={() => approveTask(t.id)} />)
+                )}
+              </div>
+            </>
+          )}
 
-        {view === "task-detail" && activeTask && (
-          <TaskDetail
-            task={activeTask}
-            balance={balance}
-            onBack={() => setView("tasks")}
-            onUpdate={handleUpdateTask}
-            onOpenRating={() => setRatingTaskId(activeTask.id)}
-            onEdit={() => startEditTask(activeTask.id)}
-            onDelete={() => handleDeleteTask(activeTask.id)}
-            onNavigateToWallet={handleNavigateToWallet}
-            onToast={pushToast}
-          />
-        )}
+          {view === "task-detail" && activeTask && (
+            <TaskDetail
+              task={activeTask}
+              balance={balance}
+              onBack={() => setView("tasks")}
+              onUpdate={handleUpdateTask}
+              onApprove={() => approveTask(activeTask.id)}
+              onOpenRating={() => setRatingTaskId(activeTask.id)}
+              onEdit={() => startEditTask(activeTask.id)}
+              onDelete={() => handleDeleteTask(activeTask.id)}
+              onDuplicate={() => startDuplicateTask(activeTask)}
+              onNavigateToWallet={handleNavigateToWallet}
+              onToast={pushToast}
+            />
+          )}
 
-        {view === "wallet" && (
-          <WalletPanel balance={balance} held={held} transactions={transactions} onTopUp={handleTopUp} suggestedTopUp={walletTopUpSuggestion} />
-        )}
+          {view === "wallet" && (
+            <WalletPanel balance={balance} held={held} transactions={transactions} onTopUp={handleTopUp} suggestedTopUp={walletTopUpSuggestion} />
+          )}
 
-        {view === "settings" && <SettingsPanel profile={profile} onSave={handleSaveProfile} />}
-      </main>
+          {view === "settings" && <SettingsPanel profile={profile} onSave={handleSaveProfile} />}
+        </main>
+      </div>
 
       {/* Mobile floating "post a task" button — kept off the Post view itself */}
       {view !== "post" && (
@@ -499,26 +637,111 @@ function StatCard({ label, value, icon, iconBg, warn = false }: { label: string;
   );
 }
 
-function TaskRow({ task, onClick }: { task: CustomerTask; onClick: () => void }) {
+function TaskRow({ task, now, onClick, onQuickApprove }: { task: CustomerTask; now: number; onClick: () => void; onQuickApprove: () => void }) {
   const Icon = categoryIcons[task.category];
-  const now = useNow();
   const overdue = !CLOSED_STATUSES.includes(task.status) && new Date(task.deadline).getTime() < now;
   return (
-    <button onClick={onClick} className="flex items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-line last:border-b-0 w-full text-left hover:bg-paper transition">
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") onClick();
+      }}
+      className="flex items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-line last:border-b-0 w-full text-left hover:bg-paper transition cursor-pointer"
+    >
       <div className="flex items-center gap-3 min-w-0">
         <div className="w-9 h-9 rounded-lg bg-lavender-100 flex items-center justify-center flex-shrink-0">
           {Icon && <Icon className="w-4 h-4 text-indigo-600" />}
         </div>
         <div className="min-w-0">
           <p className="text-[13.5px] font-semibold truncate">{task.title}</p>
-          <p className="text-[12px] text-ink-soft font-mono">#{task.id}</p>
+          <p className="text-[12px] text-ink-soft font-mono">#{task.id} · {formatRelativeTime(task.createdAt, now)}</p>
         </div>
       </div>
       <div className="flex items-center gap-2 flex-shrink-0">
         {overdue && <IconAlert className="w-4 h-4 text-[#d64545]" />}
+        {task.status === "awaiting_confirmation" && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onQuickApprove();
+            }}
+            className="hidden sm:inline-flex items-center bg-indigo-950 text-white text-[11.5px] font-semibold px-3 py-1.5 rounded-full hover:bg-indigo-900"
+          >
+            Confirm
+          </button>
+        )}
         <CustomerStatusBadge status={task.status} />
       </div>
-    </button>
+    </div>
+  );
+}
+
+function NotificationBell({
+  light = false,
+  notifications,
+  unreadCount,
+  open,
+  onToggle,
+  onClose,
+  onSelect,
+  now,
+}: {
+  light?: boolean;
+  notifications: NotificationItem[];
+  unreadCount: number;
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  onSelect: (n: NotificationItem) => void;
+  now: number;
+}) {
+  return (
+    <div className="relative">
+      <button
+        onClick={onToggle}
+        aria-label="Notifications"
+        className={`relative w-9 h-9 rounded-full flex items-center justify-center ${light ? "text-white hover:bg-white/10" : "text-ink-soft border border-line hover:border-indigo-400 hover:text-indigo-600 bg-white"}`}
+      >
+        <IconBell className="w-[18px] h-[18px]" />
+        {unreadCount > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-coral text-white text-[9.5px] font-bold flex items-center justify-center">
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={onClose} />
+          <div className="absolute right-0 mt-2 w-[300px] max-w-[85vw] bg-white rounded-2xl border border-line shadow-lg2 z-50 overflow-hidden">
+            <div className="px-4 py-3 border-b border-line">
+              <h4 className="text-[13.5px] font-semibold">Notifications</h4>
+            </div>
+            <div className="max-h-[320px] overflow-y-auto">
+              {notifications.length === 0 ? (
+                <p className="p-4 text-[13px] text-ink-soft">No notifications yet.</p>
+              ) : (
+                notifications.map((n) => (
+                  <button
+                    key={n.id}
+                    onClick={() => onSelect(n)}
+                    className="flex items-start gap-2.5 w-full text-left px-4 py-3 border-b border-line last:border-b-0 hover:bg-paper"
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${n.read ? "bg-transparent" : "bg-coral"}`} />
+                    <div className="min-w-0">
+                      <p className="text-[12.5px] text-ink leading-snug">{n.text}</p>
+                      <p className="text-[11px] text-ink-soft mt-0.5">{formatRelativeTime(n.at, now)}</p>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

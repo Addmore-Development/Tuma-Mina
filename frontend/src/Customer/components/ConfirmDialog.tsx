@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import Button from "../../components/Button";
 import { IconAlert, IconClose } from "../icons";
 
@@ -11,6 +12,13 @@ interface ConfirmDialogProps {
 }
 
 export default function ConfirmDialog({ title, description, confirmLabel, tone = "default", onConfirm, onClose }: ConfirmDialogProps) {
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
   return (
     <div className="fixed inset-0 bg-indigo-950/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-[400px] shadow-lg2" onClick={(e) => e.stopPropagation()}>

@@ -3,10 +3,12 @@ import Button from "../../components/Button";
 import type { CustomerTask, Quote } from "../../types/types";
 import CustomerStatusBadge from "./CustomerStatusBadge";
 import ConfirmDialog from "./ConfirmDialog";
-import { IconAlert, IconCamera, IconCheck, IconClock, IconEdit, IconPin, IconStar, IconTrash } from "../icons";
+import { IconAlert, IconCamera, IconCheck, IconClock, IconEdit, IconPin, IconPrint, IconRepeat, IconStar, IconTrash } from "../icons";
 import { useNow } from "../useNow";
+import { formatRelativeTime } from "../formatRelativeTime";
 
 const AUTO_RELEASE_HOURS = 72;
+const DUE_SOON_HOURS = 3;
 const COUNTER_ACCEPT_THRESHOLD = 0.85; // runner auto-accepts a counter within 15% of their ask
 
 interface TaskDetailProps {
@@ -14,9 +16,11 @@ interface TaskDetailProps {
   balance: number;
   onBack: () => void;
   onUpdate: (task: CustomerTask) => void;
+  onApprove: () => void;
   onOpenRating: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onDuplicate: () => void;
   onNavigateToWallet: (suggestedTopUp?: number) => void;
   onToast: (text: string, tone?: "success" | "error" | "info") => void;
 }
@@ -29,11 +33,12 @@ function formatCountdown(target: string, now: number) {
   return `${hrs}h ${mins}m`;
 }
 
-export default function TaskDetail({ task, balance, onBack, onUpdate, onOpenRating, onEdit, onDelete, onNavigateToWallet, onToast }: TaskDetailProps) {
+export default function TaskDetail({ task, balance, onBack, onUpdate, onApprove, onOpenRating, onEdit, onDelete, onDuplicate, onNavigateToWallet, onToast }: TaskDetailProps) {
   const [counteringId, setCounteringId] = useState<string | null>(null);
   const [counterAmount, setCounterAmount] = useState("");
   const [pendingQuoteIds, setPendingQuoteIds] = useState<Set<string>>(new Set());
   const [confirmAction, setConfirmAction] = useState<"cancel" | "cancel-refund" | "delete" | null>(null);
+  const [quoteSort, setQuoteSort] = useState<"default" | "price" | "rating">("default");
 
   const steps = useMemo(
     () => [
@@ -48,7 +53,17 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onOpenRati
   const stepOrder = ["posted", "accepted", "in_progress", "awaiting_confirmation", "completed"];
   const currentStepIndex = task.status === "disputed" || task.status === "cancelled" ? -1 : stepOrder.indexOf(task.status);
   const now = useNow();
-  const overdue = !["completed", "cancelled", "disputed"].includes(task.status) && new Date(task.deadline).getTime() < now;
+  const isClosed = ["completed", "cancelled", "disputed"].includes(task.status);
+  const msUntilDeadline = new Date(task.deadline).getTime() - now;
+  const overdue = !isClosed && msUntilDeadline < 0;
+  const dueSoon = !isClosed && !overdue && msUntilDeadline <= DUE_SOON_HOURS * 3_600_000;
+
+  const sortedQuotes = useMemo(() => {
+    const list = [...task.quotes];
+    if (quoteSort === "price") list.sort((a, b) => a.price - b.price);
+    if (quoteSort === "rating") list.sort((a, b) => b.runnerRating - a.runnerRating);
+    return list;
+  }, [task.quotes, quoteSort]);
 
   function updateQuote(quoteId: string, patch: Partial<Quote>) {
     onUpdate({ ...task, quotes: task.quotes.map((q) => (q.id === quoteId ? { ...q, ...patch } : q)) });
@@ -122,11 +137,7 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onOpenRati
   }
 
   function approveAndRelease() {
-    // TODO: POST /api/tasks/:id/approve — releases the held amount to the runner's
-    // payout balance and closes out the escrow hold.
-    onUpdate({ ...task, status: "completed", completedAt: new Date().toISOString() });
-    onToast("Payment released. Task complete!", "success");
-    onOpenRating();
+    onApprove();
   }
 
   function raiseDispute() {
@@ -168,11 +179,16 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onOpenRati
               <IconAlert className="w-3.5 h-3.5" /> Overdue
             </span>
           )}
+          {dueSoon && (
+            <span className="inline-flex items-center gap-1.5 px-[11px] py-[5px] rounded-full text-[11.5px] font-semibold bg-[#fff4e0] text-[#a86a1a] whitespace-nowrap">
+              <IconClock className="w-3.5 h-3.5" /> Due soon
+            </span>
+          )}
           <CustomerStatusBadge status={task.status} />
         </div>
       </div>
       <p className="text-ink-soft text-[13.5px] mb-6">
-        {task.id} · {task.category} · Needed by {new Date(task.deadline).toLocaleString()}
+        {task.id} · {task.category} · Needed by {new Date(task.deadline).toLocaleString()} ({formatRelativeTime(task.deadline, now)})
       </p>
 
       {/* Status stepper */}
@@ -237,11 +253,29 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onOpenRati
           {/* Quotes / accept / negotiate */}
           {task.status === "posted" && (
             <div className="mb-6">
-              <h3 className="text-[13px] font-semibold mb-2.5">
-                {task.quotes.length ? "Quotes from nearby runners" : "Waiting on quotes from nearby runners…"}
-              </h3>
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-2.5">
+                <h3 className="text-[13px] font-semibold">
+                  {task.quotes.length ? "Quotes from nearby runners" : "Waiting on quotes from nearby runners…"}
+                </h3>
+                {task.quotes.length > 1 && (
+                  <div className="flex bg-lavender-100 p-0.5 rounded-full">
+                    {(["default", "price", "rating"] as const).map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setQuoteSort(s)}
+                        className={`px-2.5 py-1 rounded-full text-[11.5px] font-semibold capitalize transition ${
+                          quoteSort === s ? "bg-white text-indigo-600 shadow-sm2" : "text-ink-soft"
+                        }`}
+                      >
+                        {s === "default" ? "Newest" : s === "price" ? "Lowest price" : "Top rated"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div className="flex flex-col gap-2.5">
-                {task.quotes.map((q) => {
+                {sortedQuotes.map((q) => {
                   const insufficient = q.price > balance;
                   const isCountering = counteringId === q.id;
                   const isPending = pendingQuoteIds.has(q.id);
@@ -372,6 +406,29 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onOpenRati
             </div>
           )}
 
+          {task.status === "completed" && task.acceptedQuote && (
+            <div className="mb-6 p-4 rounded-xl border-[1.5px] border-line">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-[13px] font-semibold">Receipt</h3>
+                <button onClick={() => window.print()} className="text-[12px] text-indigo-600 font-semibold flex items-center gap-1.5">
+                  <IconPrint className="w-3.5 h-3.5" /> Print
+                </button>
+              </div>
+              <div className="flex flex-col gap-1.5 text-[13px]">
+                <ReceiptLine label="Task" value={`${task.title} (${task.id})`} />
+                <ReceiptLine label="Runner" value={task.acceptedQuote.runnerName} />
+                <ReceiptLine label="Paid from" value="Tuma-Mina wallet" />
+                <ReceiptLine label="Completed" value={task.completedAt ? new Date(task.completedAt).toLocaleString() : "—"} />
+                <div className="h-px bg-line my-1.5" />
+                <ReceiptLine label="Total paid" value={`R${task.acceptedQuote.price.toFixed(2)}`} bold />
+              </div>
+            </div>
+          )}
+
+          {["completed", "cancelled"].includes(task.status) && (
+            <Button size="md" variant="ghost" onClick={onDuplicate} className="mb-6"><IconRepeat className="w-3.5 h-3.5" /> Post again</Button>
+          )}
+
           {task.rating && (
             <div className="mb-6 p-3.5 rounded-xl border-[1.5px] border-line">
               <p className="text-[13px] font-semibold mb-1.5">Your rating</p>
@@ -444,6 +501,15 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onOpenRati
           onClose={() => setConfirmAction(null)}
         />
       )}
+    </div>
+  );
+}
+
+function ReceiptLine({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-ink-soft">{label}</span>
+      <span className={bold ? "font-bold text-[14px]" : "font-medium"}>{value}</span>
     </div>
   );
 }

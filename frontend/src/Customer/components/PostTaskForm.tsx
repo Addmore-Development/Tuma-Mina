@@ -8,9 +8,16 @@ import { IconClose, IconPin } from "../icons";
 const categories: JobType[] = ["Delivery", "Document", "Queuing", "Shopping", "Errand"];
 const MAX_PHOTOS = 3;
 
+interface SavedLocation {
+  label: string;
+  address: string;
+}
+
 interface PostTaskFormProps {
   mode?: "create" | "edit";
   initialTask?: CustomerTask;
+  savedLocations: SavedLocation[];
+  onSaveLocation: (location: SavedLocation) => void;
   onSubmit: (task: CustomerTask) => void;
   onCancel: () => void;
 }
@@ -21,7 +28,7 @@ function toLocalDatetimeInput(iso: string) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-export default function PostTaskForm({ mode = "create", initialTask, onSubmit, onCancel }: PostTaskFormProps) {
+export default function PostTaskForm({ mode = "create", initialTask, savedLocations, onSaveLocation, onSubmit, onCancel }: PostTaskFormProps) {
   const editing = mode === "edit" && !!initialTask;
 
   const [category, setCategory] = useState<JobType>(initialTask?.category ?? "Delivery");
@@ -29,7 +36,9 @@ export default function PostTaskForm({ mode = "create", initialTask, onSubmit, o
   const [description, setDescription] = useState(initialTask?.description ?? "");
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(initialTask?.deliveryMode ?? "location");
   const [location, setLocation] = useState(initialTask?.location ?? "");
-  const [deadline, setDeadline] = useState(initialTask ? toLocalDatetimeInput(initialTask.deadline) : "");
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [newLocationLabel, setNewLocationLabel] = useState("");
+  const [deadline, setDeadline] = useState(initialTask?.deadline ? toLocalDatetimeInput(initialTask.deadline) : "");
   const [pricingMode, setPricingMode] = useState<"budget" | "quote">(initialTask?.budget ? "budget" : "quote");
   const [budget, setBudget] = useState(initialTask?.budget ? String(initialTask.budget) : "");
   const [photos, setPhotos] = useState<string[]>(initialTask?.referencePhotos ?? []);
@@ -49,13 +58,20 @@ export default function PostTaskForm({ mode = "create", initialTask, onSubmit, o
     setPhotos((p) => p.filter((x) => x !== url));
   }
 
+  function confirmSaveLocation() {
+    if (!newLocationLabel.trim() || !location.trim()) return;
+    onSaveLocation({ label: newLocationLabel.trim(), address: location.trim() });
+    setNewLocationLabel("");
+    setSavingLocation(false);
+  }
+
   function validate() {
     const next: Record<string, string> = {};
     if (!title.trim()) next.title = "Give your task a short title.";
     if (!location.trim()) next.location = "Let runners know where this is.";
     if (!deadline) {
       next.deadline = "Choose when you need this done by.";
-    } else if (new Date(deadline).getTime() <= Date.now()) {
+    } else if (new Date(deadline).getTime() <= now) {
       next.deadline = "Pick a time in the future.";
     }
     if (pricingMode === "budget" && (!budget || Number(budget) <= 0)) {
@@ -180,6 +196,39 @@ export default function PostTaskForm({ mode = "create", initialTask, onSubmit, o
               className={`${inputClass(!!errors.location)} pl-[42px]`}
             />
           </div>
+          {savedLocations.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {savedLocations.map((loc) => (
+                <button
+                  type="button"
+                  key={loc.label}
+                  onClick={() => setLocation(loc.address)}
+                  className="px-3 py-1 rounded-full border border-line text-[12px] font-medium text-ink-soft hover:border-indigo-400 hover:text-indigo-600"
+                >
+                  {loc.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {location.trim() && !savingLocation && !savedLocations.some((l) => l.address === location.trim()) && (
+            <button type="button" onClick={() => setSavingLocation(true)} className="text-[12px] text-indigo-600 font-semibold mt-1.5">
+              + Save this location
+            </button>
+          )}
+          {savingLocation && (
+            <div className="flex items-center gap-2 mt-2">
+              <input
+                type="text"
+                autoFocus
+                value={newLocationLabel}
+                onChange={(e) => setNewLocationLabel(e.target.value)}
+                placeholder="Label, e.g. Home"
+                className="flex-1 px-3 py-2 border-[1.5px] border-line rounded-lg text-[13px] focus:outline-none focus:border-indigo-500"
+              />
+              <Button type="button" size="md" onClick={confirmSaveLocation}>Save</Button>
+              <button type="button" onClick={() => setSavingLocation(false)} className="text-[12.5px] text-ink-soft">Cancel</button>
+            </div>
+          )}
         </Field>
         <Field label="Needed by" error={errors.deadline} noMarginBottom>
           <input

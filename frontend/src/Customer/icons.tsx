@@ -146,3 +146,20 @@ export const IconBell = ({ className = "" }: IconProps) => (
     <path d="M10 19a2 2 0 0 0 4 0" />
   </svg>
 );
+
+export const IconPrint = ({ className = "" }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M6 8.5V4h12v4.5" />
+    <rect x="4" y="8.5" width="16" height="7.5" rx="1.4" />
+    <rect x="6.5" y="13" width="11" height="7" rx="0.8" />
+  </svg>
+);
+
+export const IconRepeat = ({ className = "" }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M4 12a8 8 0 0 1 13.7-5.7L20 8.5" />
+    <path d="M20 4.5v4h-4" />
+    <path d="M20 12a8 8 0 0 1-13.7 5.7L4 15.5" />
+    <path d="M4 19.5v-4h4" />
+  </svg>
+);
