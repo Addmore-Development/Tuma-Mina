@@ -26,11 +26,12 @@ export default function SettingsPanel({ profile, onSave }: SettingsPanelProps) {
   }
 
   return (
-    <div className="max-w-[560px]">
+    <div className="max-w-[900px]">
       <h1 className="text-2xl mb-1.5">Settings</h1>
-      <p className="text-ink-soft text-[13.5px] mb-7">Keep your details up to date so runners and support can reach you.</p>
+      <p className="text-ink-soft text-[13.5px] mb-6 sm:mb-7">Keep your details up to date so runners and support can reach you.</p>
 
-      <form onSubmit={handleSubmit}>
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 lg:gap-8 items-start">
+      <form onSubmit={handleSubmit} className="min-w-0">
         <div className="bg-white rounded-2xl border border-line p-5 mb-5">
           <h3 className="text-[14px] font-semibold mb-4 flex items-center gap-2"><IconUser className="w-4 h-4 text-indigo-600" /> Profile</h3>
 
@@ -91,6 +92,30 @@ export default function SettingsPanel({ profile, onSave }: SettingsPanelProps) {
 
         <Button type="submit" size="lg">Save changes</Button>
       </form>
+
+      <aside className="lg:sticky lg:top-6">
+        <div className="bg-white rounded-2xl border border-line p-5 text-center">
+          <div className="w-14 h-14 rounded-full bg-coral text-white flex items-center justify-center text-[20px] font-bold mx-auto mb-3">
+            {(draft.name.trim().charAt(0) || "?").toUpperCase()}
+          </div>
+          <p className="text-[15px] font-semibold break-words">{draft.name.trim() || "Your name"}</p>
+          <span className="inline-block text-[11.5px] text-indigo-600 font-medium mb-4">Customer</span>
+          <div className="text-left border-t border-line pt-4 flex flex-col gap-2.5">
+            <SettingsSummaryRow label="Phone" value={draft.phone.trim() || "Not set"} />
+            <SettingsSummaryRow label="Email" value={draft.email.trim() || "Not set"} />
+          </div>
+        </div>
+      </aside>
+      </div>
+    </div>
+  );
+}
+
+function SettingsSummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] text-ink-soft">{label}</p>
+      <p className="text-[13px] font-medium truncate">{value}</p>
     </div>
   );
 }

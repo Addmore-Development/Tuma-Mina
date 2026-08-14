@@ -124,6 +124,12 @@ export const IconChevronDown = ({ className = "" }: IconProps) => (
   </svg>
 );
 
+export const IconChevronRight = ({ className = "" }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M9 6l6 6-6 6" />
+  </svg>
+);
+
 export const IconUser = ({ className = "" }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <circle cx="12" cy="8" r="3.6" />

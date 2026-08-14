@@ -113,6 +113,7 @@ const initialSavedLocations: SavedLocation[] = [{ label: "Home", address: "Ruste
 type View = "overview" | "post" | "tasks" | "task-detail" | "wallet" | "settings";
 type TaskFilter = "all" | "active" | "closed";
 type TaskSort = "newest" | "deadline";
+type StatusFilter = "awaiting_confirmation" | "overdue" | null;
 
 const CLOSED_STATUSES: CustomerTask["status"][] = ["completed", "cancelled", "disputed"];
 
@@ -128,6 +129,7 @@ export default function CustomerDashboard() {
   const [duplicateSeed, setDuplicateSeed] = useState<CustomerTask | null>(null);
   const [ratingTaskId, setRatingTaskId] = useState<string | null>(null);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(null);
   const [taskSort, setTaskSort] = useState<TaskSort>("newest");
   const [taskSearch, setTaskSearch] = useState("");
   const [walletTopUpSuggestion, setWalletTopUpSuggestion] = useState<number | undefined>(undefined);
@@ -155,15 +157,22 @@ export default function CustomerDashboard() {
   );
   const filteredTasks = useMemo(() => {
     let list = tasks;
-    if (taskFilter === "active") list = list.filter((t) => !CLOSED_STATUSES.includes(t.status));
-    if (taskFilter === "closed") list = list.filter((t) => CLOSED_STATUSES.includes(t.status));
+    if (statusFilter === "overdue") {
+      list = list.filter((t) => !CLOSED_STATUSES.includes(t.status) && new Date(t.deadline).getTime() < now);
+    } else if (statusFilter) {
+      list = list.filter((t) => t.status === statusFilter);
+    } else if (taskFilter === "active") {
+      list = list.filter((t) => !CLOSED_STATUSES.includes(t.status));
+    } else if (taskFilter === "closed") {
+      list = list.filter((t) => CLOSED_STATUSES.includes(t.status));
+    }
     const q = taskSearch.trim().toLowerCase();
     if (q) list = list.filter((t) => t.title.toLowerCase().includes(q) || t.id.toLowerCase().includes(q));
     list = [...list];
     if (taskSort === "deadline") list.sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
     else list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     return list;
-  }, [tasks, taskFilter, taskSearch, taskSort]);
+  }, [tasks, taskFilter, statusFilter, taskSearch, taskSort, now]);
 
   function pushToast(text: string, tone: ToastMessage["tone"] = "success", taskId?: string) {
     idCounter.current += 1;
@@ -283,6 +292,12 @@ export default function CustomerDashboard() {
     setView("wallet");
   }
 
+  function goToTasksFiltered(filter: TaskFilter, status: StatusFilter = null) {
+    setStatusFilter(status);
+    setTaskFilter(filter);
+    goTo("tasks");
+  }
+
   function handleRatingSubmit(stars: number, comment: string) {
     if (!ratingTaskId) return;
     setTasks((prev) => prev.map((t) => (t.id === ratingTaskId ? { ...t, rating: { stars, comment } } : t)));
@@ -298,6 +313,14 @@ export default function CustomerDashboard() {
   function handleSaveLocation(loc: SavedLocation) {
     setSavedLocations((prev) => (prev.some((l) => l.label.toLowerCase() === loc.label.toLowerCase()) ? prev : [...prev, loc]));
     pushToast(`Saved "${loc.label}" for next time.`, "success");
+  }
+
+  function handleViewTaskFromTransaction(taskId: string) {
+    if (tasks.some((t) => t.id === taskId)) {
+      openTask(taskId);
+    } else {
+      pushToast("That task is no longer in your history.", "info");
+    }
   }
 
   function handleNotifSelect(n: NotificationItem) {
@@ -415,9 +438,6 @@ export default function CustomerDashboard() {
                     {activeTasks.length} task{activeTasks.length === 1 ? "" : "s"} on the go right now
                   </p>
                 </div>
-                <button onClick={startPostTask} className="sm:hidden inline-flex items-center gap-1.5 bg-coral text-white hover:bg-coral-dark rounded-full font-semibold px-6 py-3 text-[14.5px]">
-                  <IconPlus className="w-4 h-4" /> Post a task
-                </button>
               </div>
 
               {tasks.length > 0 && balance < 100 && (
@@ -433,10 +453,35 @@ export default function CustomerDashboard() {
               ) : (
                 <>
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 md:mb-7">
-                    <StatCard label="Active tasks" value={String(activeTasks.length)} icon={<IconPackage className="w-[17px] h-[17px] text-indigo-600" />} iconBg="#eeeefc" />
-                    <StatCard label="Awaiting confirmation" value={String(needsConfirmation.length)} icon={<IconClock className="w-[17px] h-[17px] text-coral-dark" />} iconBg="#fff2ea" />
-                    <StatCard label="Overdue" value={String(overdueTasks.length)} icon={<IconAlert className="w-[17px] h-[17px] text-[#d64545]" />} iconBg="#fdeaea" warn={overdueTasks.length > 0} />
-                    <StatCard label="In escrow" value={`R${held}`} icon={<IconWallet className="w-[17px] h-[17px] text-[#1f9d5c]" />} iconBg="#e9faf1" />
+                    <StatCard
+                      label="Active tasks"
+                      value={String(activeTasks.length)}
+                      icon={<IconPackage className="w-[17px] h-[17px] text-indigo-600" />}
+                      iconBg="#eeeefc"
+                      onClick={() => goToTasksFiltered("active")}
+                    />
+                    <StatCard
+                      label="Awaiting confirmation"
+                      value={String(needsConfirmation.length)}
+                      icon={<IconClock className="w-[17px] h-[17px] text-coral-dark" />}
+                      iconBg="#fff2ea"
+                      onClick={() => goToTasksFiltered("all", "awaiting_confirmation")}
+                    />
+                    <StatCard
+                      label="Overdue"
+                      value={String(overdueTasks.length)}
+                      icon={<IconAlert className="w-[17px] h-[17px] text-[#d64545]" />}
+                      iconBg="#fdeaea"
+                      warn={overdueTasks.length > 0}
+                      onClick={() => goToTasksFiltered("all", "overdue")}
+                    />
+                    <StatCard
+                      label="In escrow"
+                      value={`R${held}`}
+                      icon={<IconWallet className="w-[17px] h-[17px] text-[#1f9d5c]" />}
+                      iconBg="#e9faf1"
+                      onClick={() => goTo("wallet")}
+                    />
                   </div>
 
                   <div className="bg-white rounded-2xl border border-line overflow-hidden">
@@ -470,14 +515,17 @@ export default function CustomerDashboard() {
                 <h1 className="text-xl sm:text-2xl">My tasks</h1>
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-3">
                 <div className="flex bg-white border border-line p-1 rounded-full w-fit">
                   {(["all", "active", "closed"] as TaskFilter[]).map((f) => (
                     <button
                       key={f}
-                      onClick={() => setTaskFilter(f)}
+                      onClick={() => {
+                        setStatusFilter(null);
+                        setTaskFilter(f);
+                      }}
                       className={`px-4 py-1.5 rounded-full text-[13px] font-semibold capitalize transition ${
-                        taskFilter === f ? "bg-indigo-950 text-white" : "text-ink-soft hover:text-indigo-600"
+                        !statusFilter && taskFilter === f ? "bg-indigo-950 text-white" : "text-ink-soft hover:text-indigo-600"
                       }`}
                     >
                       {f}
@@ -506,7 +554,16 @@ export default function CustomerDashboard() {
                 </select>
               </div>
 
-              <div className="bg-white rounded-2xl border border-line overflow-hidden">
+              {statusFilter && (
+                <div className="flex items-center gap-2 mb-5">
+                  <span className="inline-flex items-center gap-1.5 bg-lavender-100 text-indigo-700 text-[12.5px] font-semibold px-3 py-1.5 rounded-full">
+                    Showing: {statusFilter === "overdue" ? "Overdue" : "Awaiting confirmation"}
+                    <button onClick={() => setStatusFilter(null)} aria-label="Clear filter" className="hover:text-indigo-900">✕</button>
+                  </span>
+                </div>
+              )}
+
+              <div className="bg-white rounded-2xl border border-line overflow-hidden mt-2">
                 {tasks.length === 0 ? (
                   <div className="p-6"><EmptyState onPost={startPostTask} compact /></div>
                 ) : filteredTasks.length === 0 ? (
@@ -535,42 +592,62 @@ export default function CustomerDashboard() {
           )}
 
           {view === "wallet" && (
-            <WalletPanel balance={balance} held={held} transactions={transactions} onTopUp={handleTopUp} suggestedTopUp={walletTopUpSuggestion} />
+            <WalletPanel
+              balance={balance}
+              held={held}
+              transactions={transactions}
+              onTopUp={handleTopUp}
+              suggestedTopUp={walletTopUpSuggestion}
+              onViewTask={handleViewTaskFromTransaction}
+            />
           )}
 
           {view === "settings" && <SettingsPanel profile={profile} onSave={handleSaveProfile} />}
         </main>
       </div>
 
-      {/* Mobile floating "post a task" button — kept off the Post view itself */}
-      {view !== "post" && (
-        <button
-          onClick={startPostTask}
-          aria-label="Post a task"
-          className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full bg-coral text-white shadow-lg2 flex items-center justify-center"
-        >
-          <IconPlus className="w-6 h-6" />
-        </button>
-      )}
-
-      {/* Mobile bottom tab bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-line flex items-stretch">
-        {navItems
-          .filter((n) => n.key !== "post")
-          .map((n) => {
-            const Icon = n.icon;
-            const active = view === n.key || (n.key === "tasks" && view === "task-detail");
-            return (
-              <button
-                key={n.key}
-                onClick={() => goTo(n.key)}
-                className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[10.5px] font-medium ${active ? "text-indigo-600" : "text-ink-soft"}`}
-              >
+      {/* Mobile bottom tab bar — Post sits centered as a normal tab (not a floating
+          button) so it never overlaps list content, toasts, or form actions. Its own
+          order here (Post centered) is deliberately different from the sidebar's
+          order, which keeps "Post a task" near the top as the first action. */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-line flex items-stretch pb-[env(safe-area-inset-bottom)]">
+        {(["overview", "tasks", "post", "wallet", "settings"] as View[]).map((key) => {
+          const n = navItems.find((item) => item.key === key)!;
+          const Icon = n.icon;
+          const active = view === n.key || (n.key === "tasks" && view === "task-detail");
+          const isPost = n.key === "post";
+          const label = n.label === "My tasks" ? "Tasks" : n.label === "Post a task" ? "Post" : n.label;
+          return (
+            <button
+              key={n.key}
+              onClick={() => goTo(n.key)}
+              aria-label={n.label}
+              aria-current={active ? "page" : undefined}
+              className={`flex-1 flex flex-col items-center gap-1 py-2.5 text-[10.5px] font-medium transition ${
+                isPost
+                  ? active
+                    ? "text-coral-dark font-semibold"
+                    : "text-ink-soft"
+                  : active
+                  ? "text-indigo-600"
+                  : "text-ink-soft"
+              }`}
+            >
+              {isPost ? (
+                <span
+                  className={`w-7 h-7 -mt-1 rounded-full flex items-center justify-center transition ${
+                    active ? "bg-coral text-white" : "border-[1.5px] border-coral text-coral-dark bg-white"
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                </span>
+              ) : (
                 <Icon className="w-5 h-5" />
-                {n.label === "Post a task" ? "Post" : n.label}
-              </button>
-            );
-          })}
+              )}
+              {label}
+            </button>
+          );
+        })}
       </nav>
 
       {ratingTask && (
@@ -623,9 +700,29 @@ function NavItem({ label, icon, active = false, onClick }: { label: string; icon
   );
 }
 
-function StatCard({ label, value, icon, iconBg, warn = false }: { label: string; value: string; icon: ReactNode; iconBg: string; warn?: boolean }) {
+function StatCard({
+  label,
+  value,
+  icon,
+  iconBg,
+  warn = false,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  icon: ReactNode;
+  iconBg: string;
+  warn?: boolean;
+  onClick?: () => void;
+}) {
   return (
-    <div className={`bg-white rounded-2xl p-4 sm:p-5 border ${warn ? "border-[#f3c5c5]" : "border-line"}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-left bg-white rounded-2xl p-4 sm:p-5 border transition hover:border-indigo-300 hover:shadow-sm2 active:scale-[0.98] ${
+        warn ? "border-[#f3c5c5]" : "border-line"
+      }`}
+    >
       <div className="flex justify-between items-start mb-3 sm:mb-3.5">
         <span className="text-[11px] sm:text-xs font-semibold text-ink-soft leading-tight pr-1">{label}</span>
         <div className="w-[30px] h-[30px] sm:w-[34px] sm:h-[34px] rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: iconBg }}>
@@ -633,7 +730,7 @@ function StatCard({ label, value, icon, iconBg, warn = false }: { label: string;
         </div>
       </div>
       <h3 className="text-[22px] sm:text-[27px]">{value}</h3>
-    </div>
+    </button>
   );
 }
 
@@ -648,26 +745,26 @@ function TaskRow({ task, now, onClick, onQuickApprove }: { task: CustomerTask; n
       onKeyDown={(e) => {
         if (e.key === "Enter") onClick();
       }}
-      className="flex items-center justify-between gap-3 px-4 sm:px-5 py-4 border-b border-line last:border-b-0 w-full text-left hover:bg-paper transition cursor-pointer"
+      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 sm:gap-3 px-4 sm:px-5 py-4 border-b border-line last:border-b-0 w-full text-left hover:bg-paper transition cursor-pointer"
     >
-      <div className="flex items-center gap-3 min-w-0">
+      <div className="flex items-start gap-3 min-w-0">
         <div className="w-9 h-9 rounded-lg bg-lavender-100 flex items-center justify-center flex-shrink-0">
           {Icon && <Icon className="w-4 h-4 text-indigo-600" />}
         </div>
         <div className="min-w-0">
-          <p className="text-[13.5px] font-semibold truncate">{task.title}</p>
-          <p className="text-[12px] text-ink-soft font-mono">#{task.id} · {formatRelativeTime(task.createdAt, now)}</p>
+          <p className="text-[13.5px] font-semibold leading-snug break-words">{task.title}</p>
+          <p className="text-[12px] text-ink-soft font-mono mt-0.5 whitespace-nowrap">#{task.id} · {formatRelativeTime(task.createdAt, now)}</p>
         </div>
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {overdue && <IconAlert className="w-4 h-4 text-[#d64545]" />}
+      <div className="flex items-center gap-2 flex-shrink-0 pl-12 sm:pl-0">
+        {overdue && <IconAlert className="w-4 h-4 text-[#d64545] flex-shrink-0" />}
         {task.status === "awaiting_confirmation" && (
           <button
             onClick={(e) => {
               e.stopPropagation();
               onQuickApprove();
             }}
-            className="hidden sm:inline-flex items-center bg-indigo-950 text-white text-[11.5px] font-semibold px-3 py-1.5 rounded-full hover:bg-indigo-900"
+            className="inline-flex items-center bg-indigo-950 text-white text-[11.5px] font-semibold px-3 py-1.5 rounded-full hover:bg-indigo-900 flex-shrink-0"
           >
             Confirm
           </button>

@@ -1,9 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { useNow } from "../useNow";
+import { formatRelativeTime } from "../formatRelativeTime";
 import Button from "../../components/Button";
 import type { CustomerTask, DeliveryMode, JobType, Quote } from "../../types/types";
 import { categoryIcons } from "../categoryIcons";
-import { IconClose, IconPin } from "../icons";
+import { IconCamera, IconClose, IconPin } from "../icons";
 
 const categories: JobType[] = ["Delivery", "Document", "Queuing", "Shopping", "Errand"];
 const MAX_PHOTOS = 3;
@@ -132,7 +133,9 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="max-w-[640px]">
+    <div className="max-w-[1040px]">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 lg:gap-8 items-start">
+        <form onSubmit={handleSubmit} noValidate className="min-w-0">
       <h2 className="text-[22px] sm:text-[24px] mb-1.5">{editing ? "Edit task" : "Post a task"}</h2>
       <p className="text-ink-soft text-[13.5px] sm:text-[14px] mb-6 sm:mb-7">
         {editing
@@ -338,7 +341,57 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
         <Button type="submit" variant="primary" size="lg" block>{editing ? "Save changes" : "Post task"}</Button>
         <Button type="button" variant="ghost" size="lg" block onClick={onCancel}>Cancel</Button>
       </div>
-    </form>
+        </form>
+
+        <aside className="lg:sticky lg:top-6">
+          <div className="bg-white rounded-2xl border border-line p-5">
+            <h3 className="text-[13px] font-semibold mb-4">Task summary</h3>
+            <div className="flex flex-col gap-3.5">
+              <SummaryRow icon={categoryIcons[category]} label="Category" value={category} />
+              <SummaryRow label="Title" value={title.trim() || "Untitled task"} muted={!title.trim()} />
+              <SummaryRow icon={IconPin} label="Location" value={location.trim() || "Not set yet"} muted={!location.trim()} />
+              <SummaryRow
+                label="Needed by"
+                value={deadline ? `${new Date(deadline).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} (${formatRelativeTime(new Date(deadline).toISOString(), now)})` : "Not set yet"}
+                muted={!deadline}
+              />
+              <SummaryRow
+                label="Hand-off"
+                value={deliveryMode === "location" ? "Drop at a location" : "Hand to a person (PIN)"}
+              />
+              <SummaryRow
+                label="Pricing"
+                value={pricingMode === "budget" ? (budget ? `R${budget} budget` : "Not set yet") : "Open to quotes"}
+                muted={pricingMode === "budget" && !budget}
+              />
+              {photos.length > 0 && <SummaryRow icon={IconCamera} label="Photos" value={`${photos.length} attached`} />}
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function SummaryRow({
+  icon: Icon,
+  label,
+  value,
+  muted = false,
+}: {
+  icon?: (p: { className?: string }) => ReactNode;
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="text-[12.5px] text-ink-soft flex items-center gap-1.5 flex-shrink-0">
+        {Icon && <Icon className="w-3.5 h-3.5" />}
+        {label}
+      </span>
+      <span className={`text-[13px] font-medium text-right ${muted ? "text-ink-soft italic" : ""}`}>{value}</span>
+    </div>
   );
 }
 
