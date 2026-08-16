@@ -1,61 +1,37 @@
-export type JobStatus = "en_route" | "in_queue" | "awaiting_pin" | "flagged" | "delivered";
-export type JobType = "Delivery" | "Queuing" | "Document" | "Shopping" | "Errand";
 
-export interface Job {
-  id: string;
-  route: string;
-  runnerName: string;
-  runnerColor: string;
-  type: JobType;
-  status: JobStatus;
-  eta: string;
-}
+export type JobType = "Delivery" | "Document" | "Queuing" | "Shopping" | "Errand";
 
-export interface Exception {
-  id: string;
-  jobId: string;
-  runnerName: string;
-  location: string;
-  headline: string;
-}
-
-export interface RunnerPin {
-  name: string;
-  color: string;
-  x: number; // percentage
-  y: number; // percentage
-}
-
-// ---- Customer-facing types ----
-// Delivery proof depends on where the runner is handing the job off:
-// "location"  -> runner uploads a photo as proof (e.g. dropped at a gate/reception)
-// "person"    -> runner enters a PIN given to them by the receiver (Uber/Zulzi-style)
 export type DeliveryMode = "location" | "person";
 
 export type CustomerTaskStatus =
-  | "posted" // waiting on quotes / runner acceptance
-  | "accepted" // a runner has been confirmed, funds held in escrow
-  | "in_progress" // runner is actively working the task
-  | "awaiting_confirmation" // runner marked it done, waiting on customer approval (or 72hr auto-release)
-  | "completed" // customer approved (or it auto-released) and the runner has been paid
-  | "disputed" // customer flagged an issue, sent to a supervisor
+  | "posted"
+  | "accepted"
+  | "in_progress"
+  | "awaiting_confirmation"
+  | "completed"
+  | "disputed"
   | "cancelled";
 
-export interface QuoteOffer {
+export interface QuoteHistoryEntry {
   by: "customer" | "runner";
   price: number;
+  at: string;
   note?: string;
-  at: string; // ISO timestamp
 }
 
 export interface Quote {
   id: string;
   runnerName: string;
-  runnerRating: number; // out of 5
-  price: number; // in Rand — the currently standing price, updated as offers go back and forth
+  runnerRating: number;
+  price: number;
   note?: string;
-  status: "open" | "awaiting_runner" | "declined"; // "open" = ready to Accept as-is
-  history?: QuoteOffer[]; // negotiation trail, most recent last
+  status: "open" | "awaiting_runner";
+  history?: QuoteHistoryEntry[];
+}
+
+export interface TaskRating {
+  stars: number;
+  comment: string;
 }
 
 export interface CustomerTask {
@@ -66,33 +42,46 @@ export interface CustomerTask {
   deliveryMode: DeliveryMode;
   location: string;
   deadline: string;
-  budget: number | null; // null = "let runners quote"
+  budget: number | null;
   status: CustomerTaskStatus;
   quotes: Quote[];
   acceptedQuote?: Quote;
-  referencePhotos?: string[]; // object URLs / filenames attached when posting
+  referencePhotos?: string[];
+  // Set when deliveryMode is "person" — shared with the receiver, entered by
+  // the runner on hand-off to confirm delivery.
+  pin?: string;
   proofPhotoUrl?: string;
-  pin?: string; // only set when deliveryMode === "person"
-  deliveredAt?: string; // ISO timestamp — when the runner marked it done
-  autoReleaseAt?: string; // deliveredAt + 72h, ISO timestamp
+  deliveredAt?: string;
+  // When payment auto-releases to the runner if the customer doesn't
+  // explicitly approve first (see AUTO_RELEASE_HOURS in TaskDetail.tsx).
+  autoReleaseAt?: string;
   completedAt?: string;
   cancelledAt?: string;
   cancelReason?: string;
+  rating?: TaskRating;
   createdAt: string;
-  rating?: { stars: number; comment: string };
 }
+
+// --- Wallet --------------------------------------------------------------
+
+export type WalletTransactionType = "hold" | "release" | "topup" | "refund";
 
 export interface WalletTransaction {
   id: string;
   taskId?: string;
-  type: "hold" | "release" | "topup" | "refund";
+  type: WalletTransactionType;
   amount: number;
   date: string;
   description: string;
 }
 
+// --- Profile ---------------------------------------------------------------
+
 export interface CustomerProfile {
   name: string;
+  surname: string;
+  idNumber: string;
+  address: string;
   phone: string;
   email: string;
   notifyTaskUpdates: boolean;
