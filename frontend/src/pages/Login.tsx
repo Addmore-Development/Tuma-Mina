@@ -4,6 +4,7 @@ import Logo from "../components/Logo";
 import Button from "../components/Button";
 import { logIn, getCurrentUserRole } from "../lib/supabase/auth";
 import { fetchMyApplication } from "../lib/supabase/runner";
+import { getErrorMessage } from "../lib/getErrorMessage";
 
 const ROLE_ROUTES: Record<string, string> = {
   customer: "/customer",
@@ -38,10 +39,17 @@ export default function Login() {
       if (roleInfo.role === "runner") {
         try {
           await fetchMyApplication();
-        } catch {
-          // No application on file at all — shouldn't happen post-signup,
-          // but fail safe by sending them back to complete registration.
-          setError("No runner application found for this account. Please register again.");
+        } catch (appErr) {
+          // Distinguish "genuinely no application row" (PostgREST code
+          // PGRST116 from .single() finding 0 rows) from any other failure
+          // (permission denied, ambiguous join, network, etc) so real
+          // errors aren't hidden behind a misleading message.
+          const code = (appErr as { code?: string } | null)?.code;
+          if (code === "PGRST116") {
+            setError("No runner application found for this account. Please register again.");
+          } else {
+            setError(getErrorMessage(appErr, "Couldn't load your runner application. Please try again."));
+          }
           setLoading(false);
           return;
         }
@@ -49,7 +57,7 @@ export default function Login() {
 
       navigate(ROLE_ROUTES[roleInfo.role] ?? "/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed. Check your details and try again.");
+      setError(getErrorMessage(err, "Login failed. Check your details and try again."));
       setLoading(false);
     }
   }

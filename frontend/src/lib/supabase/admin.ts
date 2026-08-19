@@ -15,7 +15,7 @@ async function signedUrl(path: string | null): Promise<string | null> {
 export async function fetchPendingApplications() {
   const { data, error } = await supabase
     .from("runner_applications")
-    .select("*, profiles(name, surname, phone, email)")
+    .select("*, profiles!user_id(name, surname, phone, email)")
     .eq("status", "pending")
     .order("applied_at", { ascending: true });
   if (error) throw error;
@@ -111,7 +111,7 @@ export async function addSupervisor(input: {
 export async function fetchAllSupervisors() {
   const { data, error } = await supabase
     .from("supervisor_profiles")
-    .select("*, profiles(name, surname, email)")
+    .select("*, profiles!supervisor_profiles_id_fkey(name, surname, email)")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data;

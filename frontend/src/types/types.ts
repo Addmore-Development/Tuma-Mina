@@ -71,6 +71,11 @@ export interface CustomerTask {
   cancelReason?: string;
   rating?: TaskRating;
   createdAt: string;
+  // True once the customer has moved the task's price from wallet balance
+  // into escrow via fundTask(). Only possible after a runner has accepted
+  // (status "accepted" or later) — accepting a job no longer holds funds
+  // itself. Payment can't be released to the runner until this is true.
+  funded: boolean;
 }
 
 // --- Wallet --------------------------------------------------------------

@@ -54,7 +54,7 @@ export async function fetchMyApplication(): Promise<RunnerApplication> {
 
   const { data, error } = await supabase
     .from("runner_applications")
-    .select("*, profiles(name, surname, phone, email)")
+    .select("*, profiles!user_id(name, surname, phone, email)")
     .eq("user_id", userId)
     .order("applied_at", { ascending: false })
     .limit(1)

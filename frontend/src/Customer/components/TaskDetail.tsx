@@ -17,6 +17,7 @@ interface TaskDetailProps {
   onBack: () => void;
   onUpdate: (task: CustomerTask) => void;
   onApprove: () => void;
+  onFund: () => Promise<void>;
   onOpenRating: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -33,7 +34,18 @@ function formatCountdown(target: string, now: number) {
   return `${hrs}h ${mins}m`;
 }
 
-export default function TaskDetail({ task, balance, onBack, onUpdate, onApprove, onOpenRating, onEdit, onDelete, onDuplicate, onNavigateToWallet, onToast }: TaskDetailProps) {
+export default function TaskDetail({ task, balance, onBack, onUpdate, onApprove, onFund, onOpenRating, onEdit, onDelete, onDuplicate, onNavigateToWallet, onToast }: TaskDetailProps) {
+  const [funding, setFunding] = useState(false);
+
+  async function handleFund() {
+    setFunding(true);
+    try {
+      await onFund();
+    } finally {
+      setFunding(false);
+    }
+  }
+
   const [counteringId, setCounteringId] = useState<string | null>(null);
   const [counterAmount, setCounterAmount] = useState("");
   const [pendingQuoteIds, setPendingQuoteIds] = useState<Set<string>>(new Set());
@@ -365,6 +377,33 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onApprove,
                   <IconClock className="w-4 h-4" /> Your runner is on the job.
                 </div>
               )}
+
+              {!task.funded ? (
+                <div className="mb-4 p-4 rounded-xl bg-lavender-100">
+                  <p className="text-[13.5px] font-semibold mb-1">Fund this job to keep it moving</p>
+                  <p className="text-[12.5px] text-ink-soft mb-3">
+                    R{task.price ?? task.budget} will be held safely and only released to your runner once you confirm the job is done.
+                  </p>
+                  {balance < (task.price ?? task.budget ?? 0) && (
+                    <p className="text-[12px] text-[#a83232] mb-3">
+                      Your wallet balance (R{balance.toFixed(2)}) is short of the amount needed — top up first.
+                    </p>
+                  )}
+                  <div className="flex flex-col sm:flex-row gap-2.5">
+                    <Button size="md" onClick={handleFund} disabled={funding}>
+                      {funding ? "Funding..." : "Fund this job"}
+                    </Button>
+                    <Button size="md" variant="ghost" onClick={() => onNavigateToWallet(task.price ?? task.budget ?? undefined)}>
+                      Top up wallet
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2.5 text-[13px] text-brand-green mb-4">
+                  <IconCheck className="w-4 h-4" /> Payment held — R{task.price ?? task.budget} is in escrow for this job.
+                </div>
+              )}
+
               <Button size="md" variant="ghost" onClick={() => setConfirmAction("cancel-refund")} className="!text-[#a83232] hover:!border-[#a83232]">
                 Cancel task
               </Button>

@@ -10,6 +10,7 @@ import {
   type MoneyEvent,
 } from "../lib/supabase/supervisor";
 import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
+import { getErrorMessage } from "../lib/getErrorMessage";
 
 type View = "jobs" | "runners" | "money";
 
@@ -39,7 +40,7 @@ export default function SupervisorDashboard() {
       }
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load supervisor data.");
+      setError(getErrorMessage(e, "Failed to load supervisor data."));
     } finally {
       setLoading(false);
     }
@@ -51,7 +52,9 @@ export default function SupervisorDashboard() {
       [{ table: "tasks" }, { table: "runner_profiles" }, { table: "wallet_transactions" }],
       loadAll
     );
-    return () => unsubscribe(channels);
+    return () => {
+      unsubscribe(channels);
+    };
   }, [loadAll]);
 
   const scopedJobs = jobs; // already town-scoped server-side by fetchScopedJobs

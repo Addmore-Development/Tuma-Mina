@@ -70,6 +70,7 @@ async function mapTask(t: DbTask): Promise<CustomerTask> {
     cancelReason: t.cancel_reason ?? undefined,
     rating,
     createdAt: t.created_at,
+    funded: t.funded ?? false,
   };
 }
 
@@ -209,6 +210,20 @@ export async function approveAndRelease(taskDisplayId: string) {
   const { data: task, error: taskErr } = await supabase.from("tasks").select("id").eq("display_id", taskDisplayId).single();
   if (taskErr) throw taskErr;
   const { error } = await supabase.rpc("approve_and_release", { p_task_id: task.id });
+  if (error) throw error;
+}
+
+/**
+ * Moves the task's price from wallet balance into escrow. Only callable
+ * once a runner has accepted the job (status "accepted"/"in_progress") —
+ * acceptance itself no longer touches the wallet, this is the step that
+ * actually holds the money. Throws "Insufficient wallet balance..." if the
+ * customer needs to top up first.
+ */
+export async function fundTask(taskDisplayId: string) {
+  const { data: task, error: taskErr } = await supabase.from("tasks").select("id").eq("display_id", taskDisplayId).single();
+  if (taskErr) throw taskErr;
+  const { error } = await supabase.rpc("fund_task", { p_task_id: task.id });
   if (error) throw error;
 }
 

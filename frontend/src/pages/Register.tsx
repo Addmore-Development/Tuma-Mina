@@ -6,6 +6,7 @@ import { IconCamera, IconClose, IconDocument } from "../Customer/icons";
 import { signUpCustomer, signUpRunner } from "../lib/supabase/auth";
 import type { TownName } from "../lib/supabase/types";
 import { TOWNS } from "../types/platform";
+import { getErrorMessage } from "../lib/getErrorMessage";
 
 type Role = "client" | "runner";
 
@@ -121,7 +122,7 @@ export default function Register() {
       }
       navigate("/runner");
     } catch (err) {
-      setErrors({ form: err instanceof Error ? err.message : "Something went wrong. Please try again." });
+      setErrors({ form: getErrorMessage(err, "Something went wrong. Please try again.") });
       setSubmitting(false);
     }
   }

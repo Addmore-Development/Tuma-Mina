@@ -20,6 +20,7 @@ import {
   fetchFinanceSummary,
 } from "../lib/supabase/admin";
 import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
+import { getErrorMessage } from "../lib/getErrorMessage";
 
 type View = "overview" | "jobs" | "applications" | "runners" | "customers" | "supervisors" | "finance";
 
@@ -46,27 +47,42 @@ export default function AdminDashboard() {
   const [showAddSupervisor, setShowAddSupervisor] = useState(false);
 
   const loadAll = useCallback(async () => {
-    try {
-      const [apps, rns, custs, sups, jbs, fin] = await Promise.all([
-        fetchPendingApplications(),
-        fetchAllRunners(),
-        fetchAllCustomers(),
-        fetchAllSupervisors(),
-        fetchAllJobs(),
-        fetchFinanceSummary(),
-      ]);
-      setApplications(apps);
-      setRunners(rns ?? []);
-      setCustomers(custs ?? []);
-      setSupervisors(sups ?? []);
-      setJobs(jbs ?? []);
-      setFinance(fin);
+    // Each fetch is named so that if one table/query fails (e.g. an RLS
+    // policy denial or a missing trigger leaving a table empty), we can
+    // report exactly which one broke instead of blanking the whole
+    // dashboard and showing a single generic message.
+    const results = await Promise.allSettled([
+      fetchPendingApplications(),
+      fetchAllRunners(),
+      fetchAllCustomers(),
+      fetchAllSupervisors(),
+      fetchAllJobs(),
+      fetchFinanceSummary(),
+    ]);
+    const labels = ["applications", "runners", "customers", "supervisors", "jobs", "finance summary"];
+
+    const [appsR, rnsR, custsR, supsR, jbsR, finR] = results;
+
+    if (appsR.status === "fulfilled") setApplications(appsR.value);
+    if (rnsR.status === "fulfilled") setRunners(rnsR.value ?? []);
+    if (custsR.status === "fulfilled") setCustomers(custsR.value ?? []);
+    if (supsR.status === "fulfilled") setSupervisors(supsR.value ?? []);
+    if (jbsR.status === "fulfilled") setJobs(jbsR.value ?? []);
+    if (finR.status === "fulfilled") setFinance(finR.value);
+
+    const failures = results
+      .map((r, i) => (r.status === "rejected" ? { label: labels[i], reason: r.reason } : null))
+      .filter((f): f is { label: string; reason: unknown } => f !== null);
+
+    if (failures.length > 0) {
+      const detail = failures
+        .map((f) => `${f.label}: ${getErrorMessage(f.reason, "unknown error")}`)
+        .join(" · ");
+      setError(`Failed to load: ${detail}`);
+    } else {
       setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load admin data.");
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -86,7 +102,9 @@ export default function AdminDashboard() {
       ],
       loadAll
     );
-    return () => unsubscribe(channels);
+    return () => {
+      unsubscribe(channels);
+    };
   }, [loadAll]);
 
   const pendingApplications = applications; // fetchPendingApplications already filters to pending
@@ -102,7 +120,7 @@ export default function AdminDashboard() {
       await apiApproveApplication(app.id);
       await loadAll();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not approve this application.");
+      alert(getErrorMessage(e, "Could not approve this application."));
     }
   }
 
@@ -111,7 +129,7 @@ export default function AdminDashboard() {
       await apiRejectApplication(app.id, reason);
       await loadAll();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not reject this application.");
+      alert(getErrorMessage(e, "Could not reject this application."));
     }
   }
 
@@ -120,7 +138,7 @@ export default function AdminDashboard() {
       await apiToggleRunnerStatus(runner.id, runner.status);
       await loadAll();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not update runner status.");
+      alert(getErrorMessage(e, "Could not update runner status."));
     }
   }
 
@@ -130,7 +148,7 @@ export default function AdminDashboard() {
       setShowAddSupervisor(false);
       await loadAll();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not create supervisor account.");
+      alert(getErrorMessage(e, "Could not create supervisor account."));
     }
   }
 
@@ -139,7 +157,7 @@ export default function AdminDashboard() {
       await apiToggleSupervisorStatus(sup.id, sup.status);
       await loadAll();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not update supervisor status.");
+      alert(getErrorMessage(e, "Could not update supervisor status."));
     }
   }
 
@@ -148,7 +166,7 @@ export default function AdminDashboard() {
       await apiToggleSupervisorFinance(sup.id, sup.can_view_financials);
       await loadAll();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not update financial access.");
+      alert(getErrorMessage(e, "Could not update financial access."));
     }
   }
 
@@ -391,13 +409,32 @@ export default function AdminDashboard() {
   );
 }
 
-function DocRow({ label, path }: { label: string; path: string | null }) {
+function DocRow({ label, path, url }: { label: string; path: string | null; url?: string | null }) {
+  const submitted = Boolean(path);
   return (
     <div className="flex items-center justify-between gap-3 px-3 py-2.5 border-[1.5px] border-line rounded-lg">
       <div>
         <p className="text-[12px] text-ink-soft">{label}</p>
-        <p className={`text-[13px] font-medium ${!path ? "text-[#a83232]" : ""}`}>{path ? "Submitted" : "Not submitted"}</p>
+        <p className={`text-[13px] font-medium ${!submitted ? "text-[#a83232]" : ""}`}>
+          {submitted ? "Submitted" : "Not submitted"}
+        </p>
       </div>
+      {submitted && (
+        url ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[12.5px] font-semibold text-indigo-600 hover:underline flex-shrink-0"
+          >
+            View
+          </a>
+        ) : (
+          // Signed URL wasn't generated (e.g. createSignedUrl failed for this
+          // file) — surface that instead of a silently missing link.
+          <span className="text-[11.5px] text-ink-soft flex-shrink-0">Link unavailable</span>
+        )
+      )}
     </div>
   );
 }
@@ -432,10 +469,10 @@ function ApplicationRow({ application, onApprove, onReject }: { application: Row
 
       <p className="text-[11.5px] uppercase tracking-wide text-ink-soft mb-2">Verification documents</p>
       <div className="grid grid-cols-2 gap-2.5">
-        <DocRow label="Headshot" path={application.headshot_path} />
-        <DocRow label="ID document" path={application.id_document_path} />
-        <DocRow label="Proof of bank account" path={application.bank_proof_path} />
-        <DocRow label="Proof of address" path={application.address_proof_path} />
+        <DocRow label="Headshot" path={application.headshot_path} url={application.headshot_url} />
+        <DocRow label="ID document" path={application.id_document_path} url={application.id_document_url} />
+        <DocRow label="Proof of bank account" path={application.bank_proof_path} url={application.bank_proof_url} />
+        <DocRow label="Proof of address" path={application.address_proof_path} url={application.address_proof_url} />
       </div>
       {!complete && (
         <p className="text-[12px] text-[#a83232] mt-2.5">Missing documents — approval is disabled until all four are submitted.</p>

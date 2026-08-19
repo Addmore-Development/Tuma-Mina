@@ -25,6 +25,7 @@ import {
   raiseDispute as apiRaiseDispute,
   acceptQuote as apiAcceptQuote,
   approveAndRelease as apiApproveAndRelease,
+  fundTask as apiFundTask,
   submitRating as apiSubmitRating,
   devTopUpWallet,
   updateCustomerProfile as apiUpdateCustomerProfile,
@@ -32,6 +33,7 @@ import {
   type PostTaskInput,
 } from "../lib/supabase/customer";
 import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
+import { getErrorMessage } from "../lib/getErrorMessage";
 
 interface SavedLocation {
   label: string;
@@ -98,7 +100,7 @@ export default function CustomerDashboard() {
       setSavedLocations((locations ?? []).map((l: any) => ({ label: l.label, address: l.address })));
       setLoadError(null);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load your dashboard.");
+      setLoadError(getErrorMessage(e, "Failed to load your dashboard."));
     } finally {
       setLoading(false);
     }
@@ -110,7 +112,9 @@ export default function CustomerDashboard() {
       [{ table: "tasks" }, { table: "quotes" }, { table: "wallet_transactions" }, { table: "wallets" }],
       loadAll
     );
-    return () => unsubscribe(channels);
+    return () => {
+      unsubscribe(channels);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -230,7 +234,7 @@ export default function CustomerDashboard() {
         setView("tasks");
       }
     } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Couldn't save that task.", "error");
+      pushToast(getErrorMessage(e, "Couldn't save that task."), "error");
     }
   }
 
@@ -264,7 +268,7 @@ export default function CustomerDashboard() {
       }
       await loadAll();
     } catch (e) {
-      pushToast(e instanceof Error ? e.message : "That action couldn't be saved — refreshing.", "error");
+      pushToast(getErrorMessage(e, "That action couldn't be saved — refreshing."), "error");
       await loadAll();
     }
   }
@@ -278,7 +282,17 @@ export default function CustomerDashboard() {
       setRatingTaskId(id);
       await loadAll();
     } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Couldn't release payment.", "error");
+      pushToast(getErrorMessage(e, "Couldn't release payment."), "error");
+    }
+  }
+
+  async function fundTaskHandler(id: string) {
+    try {
+      await apiFundTask(id);
+      pushToast("Job funded — payment is held safely until it's confirmed done.", "success", id);
+      await loadAll();
+    } catch (e) {
+      pushToast(getErrorMessage(e, "Couldn't fund that job."), "error");
     }
   }
 
@@ -289,7 +303,7 @@ export default function CustomerDashboard() {
       setView("tasks");
       await loadAll();
     } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Couldn't remove that task.", "error");
+      pushToast(getErrorMessage(e, "Couldn't remove that task."), "error");
     }
   }
 
@@ -300,7 +314,7 @@ export default function CustomerDashboard() {
       pushToast(`R${amount.toFixed(2)} added to your wallet.`, "success");
       await loadAll();
     } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Top-up failed.", "error");
+      pushToast(getErrorMessage(e, "Top-up failed."), "error");
     }
   }
 
@@ -323,7 +337,7 @@ export default function CustomerDashboard() {
       pushToast("Thanks for the feedback!", "success");
       await loadAll();
     } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Couldn't save your rating.", "error");
+      pushToast(getErrorMessage(e, "Couldn't save your rating."), "error");
     }
   }
 
@@ -336,7 +350,7 @@ export default function CustomerDashboard() {
       setProfile(next);
       pushToast("Settings saved.", "success");
     } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Couldn't save settings.", "error");
+      pushToast(getErrorMessage(e, "Couldn't save settings."), "error");
     }
   }
 
@@ -347,7 +361,7 @@ export default function CustomerDashboard() {
       setSavedLocations((prev) => [...prev, loc]);
       pushToast(`Saved "${loc.label}" for next time.`, "success");
     } catch (e) {
-      pushToast(e instanceof Error ? e.message : "Couldn't save that location.", "error");
+      pushToast(getErrorMessage(e, "Couldn't save that location."), "error");
     }
   }
 
@@ -618,6 +632,7 @@ export default function CustomerDashboard() {
               onBack={() => setView("tasks")}
               onUpdate={handleUpdateTask}
               onApprove={() => approveTask(activeTask.id)}
+              onFund={() => fundTaskHandler(activeTask.id)}
               onOpenRating={() => setRatingTaskId(activeTask.id)}
               onEdit={() => startEditTask(activeTask.id)}
               onDelete={() => handleDeleteTask(activeTask.id)}

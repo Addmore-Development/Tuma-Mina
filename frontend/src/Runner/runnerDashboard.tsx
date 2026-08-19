@@ -5,6 +5,7 @@ import Button from "../components/Button";
 import type { PlatformJob, RunnerApplication } from "../types/platform";
 import { fetchMyApplication, fetchAvailableJobs, fetchMyJobs, acceptAvailableJob } from "../lib/supabase/runner";
 import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
+import { getErrorMessage } from "../lib/getErrorMessage";
 
 type View = "available" | "myjobs" | "earnings" | "profile";
 
@@ -29,7 +30,7 @@ export default function RunnerDashboard() {
         setMyJobs(mine);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load your runner data.");
+      setError(getErrorMessage(e, "Failed to load your runner data."));
     } finally {
       setLoading(false);
     }
@@ -38,7 +39,9 @@ export default function RunnerDashboard() {
   useEffect(() => {
     loadAll();
     const channels = subscribeToTables([{ table: "tasks" }, { table: "runner_applications" }], loadAll);
-    return () => unsubscribe(channels);
+    return () => {
+      unsubscribe(channels);
+    };
   }, [loadAll]);
 
   // Runners only ever see jobs posted in their own town.
@@ -57,7 +60,7 @@ export default function RunnerDashboard() {
       await loadAll();
       setView("myjobs");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't accept that job — it may already be taken.");
+      setError(getErrorMessage(e, "Couldn't accept that job — it may already be taken."));
     } finally {
       setAcceptingId(null);
     }
