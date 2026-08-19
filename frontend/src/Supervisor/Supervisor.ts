@@ -7,7 +7,7 @@ export async function fetchMySupervisorProfile() {
 
   const { data, error } = await supabase
     .from("supervisor_profiles")
-    .select("*, profiles!supervisor_profiles_id_fkey(name, surname, email)")
+    .select("*, profiles(name, surname, email)")
     .eq("id", userId)
     .single();
   if (error) throw error;

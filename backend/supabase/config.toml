@@ -1,0 +1,13 @@
+project_id = "nhqhrddatxvhvzhqathw"
+
+# invite-supervisor does its own admin check inside the function (see
+# index.ts — it verifies the caller's JWT and checks profiles.role =
+# 'admin' itself), so we don't need Supabase's platform-level JWT gate.
+# That gate runs *before* any of our code, including our own OPTIONS
+# handler — and since browsers never attach an Authorization header to a
+# CORS preflight request, the platform gate was rejecting the preflight
+# itself with 401 before it ever reached index.ts. That 401 has no CORS
+# headers on it (it's not our response), which is what the browser was
+# reporting as a CORS error.
+[functions.invite-supervisor]
+verify_jwt = false

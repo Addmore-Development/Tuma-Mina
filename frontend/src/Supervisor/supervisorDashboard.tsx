@@ -6,13 +6,21 @@ import {
   fetchMySupervisorProfile,
   fetchScopedJobs,
   fetchScopedRunners,
+  fetchScopedCustomers,
   fetchMoneyMovement,
   type MoneyEvent,
 } from "../lib/supabase/supervisor";
 import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
 import { getErrorMessage } from "../lib/getErrorMessage";
+import ToastStack, { type ToastMessage } from "../Customer/components/Toast";
 
-type View = "jobs" | "runners" | "money";
+type View = "jobs" | "runners" | "customers" | "money";
+
+// Loose row shape for customer_profiles as it comes back from the join —
+// same pattern as adminDashboard.tsx's local Row type.
+interface CustomerRow {
+  [key: string]: any;
+}
 
 export default function SupervisorDashboard() {
   const [view, setView] = useState<View>("jobs");
@@ -23,7 +31,13 @@ export default function SupervisorDashboard() {
   const [currentSupervisor, setCurrentSupervisor] = useState<{ name: string; town: string | "All towns"; canViewFinancials: boolean } | null>(null);
   const [jobs, setJobs] = useState<PlatformJob[]>([]);
   const [runners, setRunners] = useState<RunnerProfile[]>([]);
+  const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [moneyEvents, setMoneyEvents] = useState<MoneyEvent[]>([]);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((t) => t.filter((x) => x.id !== id));
+  }, []);
 
   const loadAll = useCallback(async () => {
     try {
@@ -31,9 +45,14 @@ export default function SupervisorDashboard() {
       setCurrentSupervisor(sup);
       const town = sup.town === "All towns" ? null : sup.town;
 
-      const [jbs, rns] = await Promise.all([fetchScopedJobs(town), fetchScopedRunners(town)]);
+      const [jbs, rns, custs] = await Promise.all([
+        fetchScopedJobs(town),
+        fetchScopedRunners(town),
+        fetchScopedCustomers(),
+      ]);
       setJobs(jbs);
       setRunners(rns);
+      setCustomers(custs ?? []);
 
       if (sup.canViewFinancials) {
         setMoneyEvents(await fetchMoneyMovement());
@@ -49,13 +68,51 @@ export default function SupervisorDashboard() {
   useEffect(() => {
     loadAll();
     const channels = subscribeToTables(
-      [{ table: "tasks" }, { table: "runner_profiles" }, { table: "wallet_transactions" }],
+      [
+        { table: "tasks" },
+        { table: "runner_profiles" },
+        { table: "customer_profiles" },
+        { table: "wallet_transactions" },
+      ],
       loadAll
     );
     return () => {
       unsubscribe(channels);
     };
   }, [loadAll]);
+
+  // Separate, narrower subscription just for newly posted jobs, so the
+  // supervisor gets an explicit notification rather than only a silent
+  // table refresh. Scoped to the supervisor's town once known; "All towns"
+  // supervisors get every posted job.
+  useEffect(() => {
+    if (!currentSupervisor) return;
+    const town = currentSupervisor.town === "All towns" ? null : currentSupervisor.town;
+    const channels = subscribeToTables(
+      [
+        {
+          table: "tasks",
+          event: "INSERT",
+          filter: town ? `town=eq.${town}` : undefined,
+        },
+      ],
+      (payload) => {
+        const job = payload?.new;
+        if (!job || job.status !== "posted") return;
+        setToasts((t) => [
+          ...t,
+          {
+            id: `${job.id}-${Date.now()}`,
+            tone: "info",
+            text: `New job posted: ${job.title} (#${job.display_id}) · ${job.town}`,
+          },
+        ]);
+      }
+    );
+    return () => {
+      unsubscribe(channels);
+    };
+  }, [currentSupervisor?.town]);
 
   const scopedJobs = jobs; // already town-scoped server-side by fetchScopedJobs
   const filteredJobs = useMemo(() => {
@@ -96,6 +153,7 @@ export default function SupervisorDashboard() {
         <div className="font-mono text-[10.5px] uppercase tracking-wider text-indigo-400/80 mb-2.5 ml-2.5">Supervisor</div>
         <NavItem label="Jobs" active={view === "jobs"} onClick={() => setView("jobs")} badge={exceptionsCount} />
         <NavItem label="Runners" active={view === "runners"} onClick={() => setView("runners")} />
+        <NavItem label="Customers" active={view === "customers"} onClick={() => setView("customers")} />
         {currentSupervisor.canViewFinancials && (
           <NavItem label="Money movement" active={view === "money"} onClick={() => setView("money")} />
         )}
@@ -135,6 +193,7 @@ export default function SupervisorDashboard() {
           <StatCard label="Active jobs" value={String(activeCount)} />
           <StatCard label="Exceptions / disputes" value={String(exceptionsCount)} warn={exceptionsCount > 0} />
           <StatCard label="Active runners" value={String(runners.filter((r) => r.status === "active").length)} />
+          <StatCard label="Customers" value={String(customers.length)} />
           {currentSupervisor.canViewFinancials ? (
             <StatCard label="Currently in escrow" value={`R${held.toFixed(2)}`} />
           ) : (
@@ -193,6 +252,25 @@ export default function SupervisorDashboard() {
           </div>
         )}
 
+        {view === "customers" && (
+          <div className="bg-white rounded-2xl border border-line overflow-hidden">
+            <div className="px-5 py-4 border-b border-line">
+              <h3 className="text-[15.5px]">Customers</h3>
+              <p className="text-[12px] text-ink-soft mt-0.5">Everyone signed up as a customer, and their wallet balance.</p>
+            </div>
+            {customers.length === 0 && <p className="p-6 text-[13.5px] text-ink-soft">No customers yet.</p>}
+            {customers.map((c) => (
+              <div key={c.id} className="flex items-center justify-between gap-3 px-5 py-4 border-b border-line last:border-b-0 flex-wrap">
+                <div>
+                  <p className="text-[13.5px] font-semibold">{c.profiles?.name} {c.profiles?.surname}</p>
+                  <p className="text-[12px] text-ink-soft">{c.profiles?.email} · {c.profiles?.phone}</p>
+                </div>
+                <span className="text-[13px] font-semibold">R{Number(c.wallets?.[0]?.balance ?? 0).toFixed(2)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {view === "money" && currentSupervisor.canViewFinancials && (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6 max-w-[600px]">
@@ -222,6 +300,7 @@ export default function SupervisorDashboard() {
           </>
         )}
       </main>
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
