@@ -1,46 +1,15 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Logo from "../components/Logo";
 import type { PlatformJob, RunnerProfile } from "../types/platform";
-
-// TODO: replace with GET /api/supervisor/me — includes canViewFinancials from
-// the SupervisorAccount record the admin created. This dashboard doesn't get
-// its own signup; it's provisioned entirely by Admin > Supervisors.
-const currentSupervisor = {
-  name: "Naledi K.",
-  town: "All towns" as const,
-  canViewFinancials: true,
-};
-
-// TODO: replace with GET /api/supervisor/jobs
-const jobs: PlatformJob[] = [
-  { id: "TM-4821", title: "Collect a parcel from the courier depot", category: "Delivery", town: "Rustenburg", location: "Rustenburg CBD", customerName: "Kagiso T.", runnerName: "Thabo M.", status: "in_progress", price: 90, platformFee: 13.5, postedAt: new Date(Date.now() - 5 * 3_600_000).toISOString(), deadline: new Date(Date.now() + 26 * 3_600_000).toISOString() },
-  { id: "TM-4790", title: "Queue at Home Affairs for an ID renewal", category: "Queuing", town: "Rustenburg", location: "Home Affairs, Rustenburg", customerName: "Kagiso T.", status: "posted", price: 60, platformFee: 9, postedAt: new Date(Date.now() - 20 * 3_600_000).toISOString(), deadline: new Date(Date.now() + 3 * 24 * 3_600_000).toISOString() },
-  { id: "TM-4756", title: "Grocery run for the week", category: "Shopping", town: "Johannesburg", location: "Waterfall Mall", customerName: "Palesa N.", runnerName: "Ayanda B.", status: "completed", price: 250, platformFee: 37.5, postedAt: new Date(Date.now() - 3 * 24 * 3_600_000).toISOString(), deadline: new Date(Date.now() - 2 * 24 * 3_600_000).toISOString() },
-  { id: "TM-4703", title: "Fetch signed lease documents", category: "Document", town: "Pretoria", location: "Fourways", customerName: "Lindiwe D.", status: "disputed", price: 70, platformFee: 10.5, postedAt: new Date(Date.now() - 30 * 3_600_000).toISOString(), deadline: new Date(Date.now() - 5 * 3_600_000).toISOString() },
-];
-
-// TODO: replace with GET /api/supervisor/runners
-const runners: RunnerProfile[] = [
-  { id: "R-01", applicationId: "RA-1042", name: "Thabo Molefe", town: "Rustenburg", phone: "+27 82 555 0143", email: "thabo@example.com", rating: 4.9, completedJobs: 38, status: "active", joinedAt: new Date(Date.now() - 60 * 86_400_000).toISOString() },
-  { id: "R-02", applicationId: "RA-1039", name: "Ayanda Bhengu", town: "Johannesburg", phone: "+27 81 222 9090", email: "ayanda@example.com", rating: 4.6, completedJobs: 21, status: "active", joinedAt: new Date(Date.now() - 40 * 86_400_000).toISOString() },
-];
-
-// TODO: replace with GET /api/supervisor/wallet-activity — only fetched/rendered
-// at all if currentSupervisor.canViewFinancials is true.
-interface MoneyEvent {
-  id: string;
-  jobId: string;
-  type: "hold" | "release" | "refund";
-  amount: number;
-  at: string;
-  note: string;
-}
-const moneyEvents: MoneyEvent[] = [
-  { id: "m1", jobId: "TM-4821", type: "hold", amount: 90, at: new Date(Date.now() - 5 * 3_600_000).toISOString(), note: "Held from Kagiso T. on runner acceptance" },
-  { id: "m2", jobId: "TM-4756", type: "release", amount: 250, at: new Date(Date.now() - 2 * 24 * 3_600_000 + 3_600_000).toISOString(), note: "Released to Ayanda B. on customer approval" },
-  { id: "m3", jobId: "TM-4703", type: "refund", amount: 70, at: new Date(Date.now() - 4 * 3_600_000).toISOString(), note: "Refund pending — customer disputed job" },
-];
+import {
+  fetchMySupervisorProfile,
+  fetchScopedJobs,
+  fetchScopedRunners,
+  fetchMoneyMovement,
+  type MoneyEvent,
+} from "../lib/supabase/supervisor";
+import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
 
 type View = "jobs" | "runners" | "money";
 
@@ -48,15 +17,68 @@ export default function SupervisorDashboard() {
   const [view, setView] = useState<View>("jobs");
   const [search, setSearch] = useState("");
 
-  const scopedJobs = useMemo(
-    () => jobs.filter((j) => currentSupervisor.town === "All towns" || j.town === currentSupervisor.town),
-    []
-  );
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [currentSupervisor, setCurrentSupervisor] = useState<{ name: string; town: string | "All towns"; canViewFinancials: boolean } | null>(null);
+  const [jobs, setJobs] = useState<PlatformJob[]>([]);
+  const [runners, setRunners] = useState<RunnerProfile[]>([]);
+  const [moneyEvents, setMoneyEvents] = useState<MoneyEvent[]>([]);
+
+  const loadAll = useCallback(async () => {
+    try {
+      const sup = await fetchMySupervisorProfile();
+      setCurrentSupervisor(sup);
+      const town = sup.town === "All towns" ? null : sup.town;
+
+      const [jbs, rns] = await Promise.all([fetchScopedJobs(town), fetchScopedRunners(town)]);
+      setJobs(jbs);
+      setRunners(rns);
+
+      if (sup.canViewFinancials) {
+        setMoneyEvents(await fetchMoneyMovement());
+      }
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load supervisor data.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+    const channels = subscribeToTables(
+      [{ table: "tasks" }, { table: "runner_profiles" }, { table: "wallet_transactions" }],
+      loadAll
+    );
+    return () => unsubscribe(channels);
+  }, [loadAll]);
+
+  const scopedJobs = jobs; // already town-scoped server-side by fetchScopedJobs
   const filteredJobs = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return scopedJobs;
     return scopedJobs.filter((j) => j.id.toLowerCase().includes(q) || (j.runnerName ?? "").toLowerCase().includes(q) || j.customerName.toLowerCase().includes(q));
   }, [scopedJobs, search]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-lavender-100 flex items-center justify-center">
+        <p className="text-[13.5px] text-ink-soft">Loading dashboard...</p>
+      </div>
+    );
+  }
+
+  if (error || !currentSupervisor) {
+    return (
+      <div className="min-h-screen bg-lavender-100 flex items-center justify-center px-6">
+        <div className="bg-white rounded-2xl border border-line p-8 max-w-[440px] text-center">
+          <h2 className="text-[20px] mb-2">Couldn't load supervisor data</h2>
+          <p className="text-[13.5px] text-ink-soft">{error ?? "No supervisor profile found for this account."}</p>
+        </div>
+      </div>
+    );
+  }
 
   const activeCount = scopedJobs.filter((j) => !["completed", "cancelled"].includes(j.status)).length;
   const exceptionsCount = scopedJobs.filter((j) => j.status === "disputed").length;

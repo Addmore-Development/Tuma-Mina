@@ -37,61 +37,81 @@ async function uploadKycFile(userId: string, kind: string, file: File): Promise<
   return path;
 }
 
+/**
+ * Both signup functions pass all profile fields as auth `options.data`
+ * metadata rather than inserting into `profiles` from the client. A
+ * database trigger (see backend/sql/schema_fixes.sql, `handle_new_user`)
+ * reads that metadata and provisions `profiles` (+ `customer_profiles` /
+ * `wallets` for customers) as part of the signup transaction itself.
+ *
+ * This matters because `supabase.auth.signUp()` only returns an active
+ * session immediately if your Supabase project has "Confirm email" turned
+ * off. If it's on, `data.session` is null until the user clicks the
+ * confirmation link — so `auth.uid()` is null and any client-side insert
+ * guarded by `id = auth.uid()` RLS would fail with 403, even though the
+ * signup itself "succeeded". Provisioning via a trigger sidesteps that
+ * entirely, since it runs server-side with elevated privileges regardless
+ * of session state.
+ */
 export async function signUpCustomer(input: CustomerSignupInput) {
   const { data: authData, error: authError } = await supabase.auth.signUp({
     email: input.email,
     password: input.password,
+    options: {
+      data: {
+        role: "customer",
+        name: input.name,
+        surname: input.surname,
+        phone: input.phone,
+        id_number: input.idNumber,
+        address: input.address,
+      },
+    },
   });
   if (authError) throw authError;
-  const userId = authData.user?.id;
-  if (!userId) throw new Error("Sign-up did not return a user id — check email confirmation settings.");
+  if (!authData.user) throw new Error("Sign-up did not return a user — please try again.");
 
-  const { error: profileError } = await supabase.from("profiles").insert({
-    id: userId,
-    role: "customer",
-    name: input.name,
-    surname: input.surname,
-    phone: input.phone,
-    email: input.email,
-  });
-  if (profileError) throw profileError;
-
-  const { error: customerError } = await supabase.from("customer_profiles").insert({
-    id: userId,
-    id_number: input.idNumber,
-    address: input.address,
-  });
-  if (customerError) throw customerError;
-
-  const { error: walletError } = await supabase.from("wallets").insert({
-    customer_id: userId,
-    balance: 0,
-  });
-  if (walletError) throw walletError;
-
-  return authData;
+  return {
+    ...authData,
+    emailConfirmationRequired: !authData.session,
+  };
 }
 
 export async function signUpRunner(input: RunnerSignupInput) {
   const { data: authData, error: authError } = await supabase.auth.signUp({
     email: input.email,
     password: input.password,
+    options: {
+      data: {
+        role: "runner",
+        name: input.name,
+        surname: input.surname,
+        phone: input.phone,
+      },
+    },
   });
   if (authError) throw authError;
   const userId = authData.user?.id;
-  if (!userId) throw new Error("Sign-up did not return a user id — check email confirmation settings.");
+  if (!userId) throw new Error("Sign-up did not return a user — please try again.");
 
-  const { error: profileError } = await supabase.from("profiles").insert({
-    id: userId,
-    role: "runner",
-    name: input.name,
-    surname: input.surname,
-    phone: input.phone,
-    email: input.email,
-  });
-  if (profileError) throw profileError;
+  // The KYC upload + runner_applications insert both need an active session
+  // (storage RLS and the "applications: applicant insert own" policy both
+  // check auth.uid()). If email confirmation is required, there isn't one
+  // yet — the profiles row still gets created (by the trigger), but the
+  // application has to be finished after the user confirms their email and
+  // logs in. See completeRunnerApplication below.
+  if (!authData.session) {
+    return { ...authData, emailConfirmationRequired: true, applicationSubmitted: false };
+  }
 
-  // Upload all four KYC documents in parallel.
+  await submitRunnerApplication(userId, input);
+  return { ...authData, emailConfirmationRequired: false, applicationSubmitted: true };
+}
+
+async function submitRunnerApplication(
+  userId: string,
+  input: Pick<RunnerSignupInput, "town" | "idNumber" | "address" | "headshot" | "idDocument" | "bankProof" | "addressProof">
+) {
   const [headshotPath, idDocPath, bankPath, addressPath] = await Promise.all([
     uploadKycFile(userId, "headshot", input.headshot),
     uploadKycFile(userId, "id-document", input.idDocument),
@@ -110,8 +130,21 @@ export async function signUpRunner(input: RunnerSignupInput) {
     address_proof_path: addressPath,
   });
   if (appError) throw appError;
+}
 
-  return authData;
+/**
+ * For a runner whose signup happened while email confirmation was pending
+ * (so their KYC documents never got uploaded / application never got
+ * created). Call this right after login if `fetchMyApplication()` in
+ * runner.ts comes back empty for a "runner"-role profile.
+ */
+export async function completeRunnerApplication(
+  input: Pick<RunnerSignupInput, "town" | "idNumber" | "address" | "headshot" | "idDocument" | "bankProof" | "addressProof">
+) {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user.id;
+  if (!userId) throw new Error("Not logged in");
+  await submitRunnerApplication(userId, input);
 }
 
 export async function logIn(email: string, password: string) {

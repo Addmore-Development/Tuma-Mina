@@ -89,8 +89,6 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
     const resolvedBudget = pricingMode === "budget" && budget ? Number(budget) : null;
 
     if (editing && initialTask) {
-      // Only pre-runner-acceptance fields are editable — status, quotes and
-      // anything already agreed with a runner are left untouched.
       onSubmit({
         ...initialTask,
         title: title.trim(),
@@ -106,9 +104,6 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
       return;
     }
 
-    // TODO: POST /api/tasks with { category, title, description, deliveryMode, location,
-    // deadline, budget, referencePhotos }. The backend fans this out to nearby runners, who
-    // then submit quotes (or accept the budget outright) — those come back over quotes[].
     const id = `TM-${Math.floor(1000 + Math.random() * 9000)}`;
     const seedPrice = resolvedBudget ?? 95;
     const quotes: Quote[] = [
@@ -247,7 +242,7 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
       {/* Delivery mode */}
       <div className="mb-[18px] mt-[18px]">
         <label className="block text-[13px] font-semibold mb-2.5">How is this handed off?</label>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <button
             type="button"
             onClick={() => setDeliveryMode("location")}
@@ -267,6 +262,16 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
           >
             <span className="block text-[13.5px] font-semibold mb-1">Hand to a person</span>
             <span className="block text-[12.5px] text-ink-soft">We'll generate a PIN — share it with the receiver to confirm.</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeliveryMode("courier")}
+            className={`text-left p-3.5 rounded-xl border-[1.5px] transition ${
+              deliveryMode === "courier" ? "border-indigo-500 bg-lavender-100" : "border-line hover:border-indigo-300"
+            }`}
+          >
+            <span className="block text-[13.5px] font-semibold mb-1">Courier delivery</span>
+            <span className="block text-[12.5px] text-ink-soft">A courier picks up and delivers — no in-person hand-off.</span>
           </button>
         </div>
       </div>
@@ -357,7 +362,13 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
               />
               <SummaryRow
                 label="Hand-off"
-                value={deliveryMode === "location" ? "Drop at a location" : "Hand to a person (PIN)"}
+                value={
+                  deliveryMode === "location"
+                    ? "Drop at a location"
+                    : deliveryMode === "person"
+                    ? "Hand to a person (PIN)"
+                    : "Courier delivery"
+                }
               />
               <SummaryRow
                 label="Pricing"

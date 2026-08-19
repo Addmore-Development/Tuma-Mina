@@ -1,6 +1,6 @@
 import { supabase } from "./supabaseClient";
-import type { CustomerTask, Quote, WalletTransaction } from "../src/Customer/types/types"; // adjust path to your frontend types
-import type { DbTask, DbQuote, DbWalletTransaction } from "./types";
+import type { CustomerTask, Quote, WalletTransaction } from "../../types/types";
+import type { DbTask, DbQuote } from "./types";
 
 // ---------------------------------------------------------------------------
 // Mapping helpers — DB row shape -> frontend type shape, so components don't
@@ -269,6 +269,30 @@ export async function devTopUpWallet(amount: number) {
 // ---------------------------------------------------------------------------
 // Settings / saved locations
 // ---------------------------------------------------------------------------
+
+export async function fetchMyProfile(): Promise<{ name: string; surname: string; idNumber: string; address: string; phone: string; email: string; notifyTaskUpdates: boolean; notifyPromotions: boolean }> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const userId = sessionData.session?.user.id;
+  if (!userId) throw new Error("Not logged in");
+
+  const { data, error } = await supabase
+    .from("customer_profiles")
+    .select("id_number, address, notify_task_updates, notify_promotions, profiles(name, surname, phone, email)")
+    .eq("id", userId)
+    .single();
+  if (error) throw error;
+  const p = (data as any).profiles;
+  return {
+    name: p?.name ?? "",
+    surname: p?.surname ?? "",
+    idNumber: data.id_number,
+    address: data.address,
+    phone: p?.phone ?? "",
+    email: p?.email ?? "",
+    notifyTaskUpdates: data.notify_task_updates,
+    notifyPromotions: data.notify_promotions,
+  };
+}
 
 export async function updateCustomerProfile(patch: {
   name: string; surname: string; phone: string; email: string;

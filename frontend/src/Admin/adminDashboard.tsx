@@ -1,98 +1,155 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Logo from "../components/Logo";
 import Button from "../components/Button";
-import type { PlatformJob, RunnerApplication, RunnerProfile, SupervisorAccount, TownName, KYCDocument } from "../types/platform";
-import { TOWNS, isApplicationComplete } from "../types/platform";
+import type { TownName } from "../types/platform";
+import { TOWNS } from "../types/platform";
+import {
+  fetchPendingApplications,
+  isApplicationComplete,
+  approveApplication as apiApproveApplication,
+  rejectApplication as apiRejectApplication,
+  fetchAllRunners,
+  toggleRunnerStatus as apiToggleRunnerStatus,
+  fetchAllCustomers,
+  addSupervisor as apiAddSupervisor,
+  fetchAllSupervisors,
+  toggleSupervisorStatus as apiToggleSupervisorStatus,
+  toggleSupervisorFinance as apiToggleSupervisorFinance,
+  fetchAllJobs,
+  fetchFinanceSummary,
+} from "../lib/supabase/admin";
+import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
 
-// TODO: replace all three with real GET endpoints on mount.
-const initialJobs: PlatformJob[] = [
-  { id: "TM-4821", title: "Collect a parcel from the courier depot", category: "Delivery", town: "Rustenburg", location: "Rustenburg CBD", customerName: "Kagiso T.", runnerName: "Thabo M.", status: "in_progress", price: 90, platformFee: 13.5, postedAt: new Date(Date.now() - 5 * 3_600_000).toISOString(), deadline: new Date(Date.now() + 26 * 3_600_000).toISOString() },
-  { id: "TM-4790", title: "Queue at Home Affairs for an ID renewal", category: "Queuing", town: "Rustenburg", location: "Home Affairs, Rustenburg", customerName: "Kagiso T.", status: "posted", price: 60, platformFee: 9, postedAt: new Date(Date.now() - 20 * 3_600_000).toISOString(), deadline: new Date(Date.now() + 3 * 24 * 3_600_000).toISOString() },
-  { id: "TM-4756", title: "Grocery run for the week", category: "Shopping", town: "Johannesburg", location: "Waterfall Mall", customerName: "Palesa N.", runnerName: "Ayanda B.", status: "completed", price: 250, platformFee: 37.5, postedAt: new Date(Date.now() - 3 * 24 * 3_600_000).toISOString(), deadline: new Date(Date.now() - 2 * 24 * 3_600_000).toISOString() },
-  { id: "TM-4703", title: "Fetch signed lease documents", category: "Document", town: "Pretoria", location: "Fourways", customerName: "Lindiwe D.", status: "disputed", price: 70, platformFee: 10.5, postedAt: new Date(Date.now() - 30 * 3_600_000).toISOString(), deadline: new Date(Date.now() - 5 * 3_600_000).toISOString() },
-];
+type View = "overview" | "jobs" | "applications" | "runners" | "customers" | "supervisors" | "finance";
 
-function mockDoc(name: string): KYCDocument {
-  return { fileName: name, uploadedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(), status: "pending" };
+// Row shapes as they come back from Supabase (joined) rather than the old
+// hand-typed mock interfaces — kept loose (any-ish) since these are purely
+// display rows built from live joins.
+interface Row {
+  [key: string]: any;
 }
 
-const initialApplications: RunnerApplication[] = [
-  {
-    id: "RA-1050", name: "Sipho", surname: "Radebe", phone: "+27 83 111 2222", email: "sipho@example.com",
-    town: "Rustenburg", idNumber: "9501015555088", address: "12 Church St, Rustenburg",
-    headshot: mockDoc("sipho_headshot.jpg"), idDocument: mockDoc("sipho_id.pdf"),
-    bankProof: mockDoc("sipho_bank.pdf"), addressProof: mockDoc("sipho_address.pdf"),
-    appliedAt: new Date(Date.now() - 1 * 3_600_000).toISOString(), status: "pending",
-  },
-  {
-    id: "RA-1051", name: "Naledi", surname: "Khumalo", phone: "+27 84 333 4444", email: "naledi@example.com",
-    town: "Johannesburg", idNumber: "9702025555088", address: "45 Main Rd, Johannesburg",
-    headshot: mockDoc("naledi_headshot.jpg"), idDocument: mockDoc("naledi_id.pdf"),
-    bankProof: mockDoc("naledi_bank.pdf"), addressProof: null, // incomplete on purpose, for the demo
-    appliedAt: new Date(Date.now() - 6 * 3_600_000).toISOString(), status: "pending",
-  },
-];
-
-const initialRunners: RunnerProfile[] = [
-  { id: "R-01", applicationId: "RA-1042", name: "Thabo Molefe", town: "Rustenburg", phone: "+27 82 555 0143", email: "thabo@example.com", rating: 4.9, completedJobs: 38, status: "active", joinedAt: new Date(Date.now() - 60 * 86_400_000).toISOString() },
-  { id: "R-02", applicationId: "RA-1039", name: "Ayanda Bhengu", town: "Johannesburg", phone: "+27 81 222 9090", email: "ayanda@example.com", rating: 4.6, completedJobs: 21, status: "active", joinedAt: new Date(Date.now() - 40 * 86_400_000).toISOString() },
-];
-
-const initialSupervisors: SupervisorAccount[] = [
-  { id: "S-01", name: "Naledi K.", email: "naledi.supervisor@example.com", town: "All towns", createdAt: new Date(Date.now() - 90 * 86_400_000).toISOString(), status: "active", canViewFinancials: true },
-];
-
-type View = "overview" | "jobs" | "applications" | "runners" | "supervisors" | "finance";
-
 export default function AdminDashboard() {
-  const [jobs] = useState<PlatformJob[]>(initialJobs);
-  const [applications, setApplications] = useState<RunnerApplication[]>(initialApplications);
-  const [runners, setRunners] = useState<RunnerProfile[]>(initialRunners);
-  const [supervisors, setSupervisors] = useState<SupervisorAccount[]>(initialSupervisors);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [jobs, setJobs] = useState<Row[]>([]);
+  const [applications, setApplications] = useState<Row[]>([]);
+  const [runners, setRunners] = useState<Row[]>([]);
+  const [customers, setCustomers] = useState<Row[]>([]);
+  const [supervisors, setSupervisors] = useState<Row[]>([]);
+  const [finance, setFinance] = useState({ totalHandled: 0, revenue: 0, completedCount: 0 });
+
   const [view, setView] = useState<View>("overview");
   const [jobTownFilter, setJobTownFilter] = useState<TownName | "all">("all");
   const [showAddSupervisor, setShowAddSupervisor] = useState(false);
 
-  const pendingApplications = useMemo(() => applications.filter((a) => a.status === "pending"), [applications]);
+  const loadAll = useCallback(async () => {
+    try {
+      const [apps, rns, custs, sups, jbs, fin] = await Promise.all([
+        fetchPendingApplications(),
+        fetchAllRunners(),
+        fetchAllCustomers(),
+        fetchAllSupervisors(),
+        fetchAllJobs(),
+        fetchFinanceSummary(),
+      ]);
+      setApplications(apps);
+      setRunners(rns ?? []);
+      setCustomers(custs ?? []);
+      setSupervisors(sups ?? []);
+      setJobs(jbs ?? []);
+      setFinance(fin);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load admin data.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+    // Any change to any of these tables (a customer posting a task, a runner
+    // signing up, a runner accepting a job, a supervisor being toggled, etc.)
+    // re-pulls everything so this dashboard never goes stale.
+    const channels = subscribeToTables(
+      [
+        { table: "tasks" },
+        { table: "quotes" },
+        { table: "runner_applications" },
+        { table: "runner_profiles" },
+        { table: "customer_profiles" },
+        { table: "supervisor_profiles" },
+        { table: "wallet_transactions" },
+      ],
+      loadAll
+    );
+    return () => unsubscribe(channels);
+  }, [loadAll]);
+
+  const pendingApplications = applications; // fetchPendingApplications already filters to pending
   const activeRunners = useMemo(() => runners.filter((r) => r.status === "active"), [runners]);
-  const revenue = useMemo(() => jobs.filter((j) => j.status === "completed").reduce((sum, j) => sum + j.platformFee, 0), [jobs]);
-  const totalHandled = useMemo(() => jobs.filter((j) => j.status === "completed").reduce((sum, j) => sum + j.price, 0), [jobs]);
-  const filteredJobs = useMemo(() => (jobTownFilter === "all" ? jobs : jobs.filter((j) => j.town === jobTownFilter)), [jobs, jobTownFilter]);
+  const filteredJobs = useMemo(
+    () => (jobTownFilter === "all" ? jobs : jobs.filter((j) => j.town === jobTownFilter)),
+    [jobs, jobTownFilter]
+  );
 
-  function approveApplication(app: RunnerApplication) {
-    if (!isApplicationComplete(app)) return; // safety net — button is already disabled for this
-    // TODO: POST /api/admin/applications/:id/approve — should also provision runner login credentials
-    setApplications((prev) => prev.map((a) => (a.id === app.id ? { ...a, status: "approved" } : a)));
-    setRunners((prev) => [
-      { id: `R-${prev.length + 1}`.padStart(4, "0"), applicationId: app.id, name: `${app.name} ${app.surname}`, town: app.town, phone: app.phone, email: app.email, rating: 0, completedJobs: 0, status: "active", joinedAt: new Date().toISOString() },
-      ...prev,
-    ]);
+  async function approveApplicationHandler(app: Row) {
+    if (!isApplicationComplete(app)) return;
+    try {
+      await apiApproveApplication(app.id);
+      await loadAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not approve this application.");
+    }
   }
 
-  function rejectApplication(app: RunnerApplication, reason: string) {
-    // TODO: POST /api/admin/applications/:id/reject
-    setApplications((prev) => prev.map((a) => (a.id === app.id ? { ...a, status: "rejected", rejectionReason: reason } : a)));
+  async function rejectApplicationHandler(app: Row, reason: string) {
+    try {
+      await apiRejectApplication(app.id, reason);
+      await loadAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not reject this application.");
+    }
   }
 
-  function toggleRunnerStatus(runner: RunnerProfile) {
-    // TODO: PATCH /api/admin/runners/:id
-    setRunners((prev) => prev.map((r) => (r.id === runner.id ? { ...r, status: r.status === "active" ? "suspended" : "active" } : r)));
+  async function toggleRunnerStatusHandler(runner: Row) {
+    try {
+      await apiToggleRunnerStatus(runner.id, runner.status);
+      await loadAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not update runner status.");
+    }
   }
 
-  function addSupervisor(name: string, email: string, town: TownName | "All towns", canViewFinancials: boolean) {
-    // TODO: POST /api/admin/supervisors — should also send an invite email
-    setSupervisors((prev) => [{ id: `S-${prev.length + 1}`.padStart(4, "0"), name, email, town, createdAt: new Date().toISOString(), status: "active", canViewFinancials }, ...prev]);
-    setShowAddSupervisor(false);
+  async function addSupervisorHandler(name: string, surname: string, email: string, town: TownName | "All towns", canViewFinancials: boolean) {
+    try {
+      await apiAddSupervisor({ name, surname, email, town, canViewFinancials });
+      setShowAddSupervisor(false);
+      await loadAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not create supervisor account.");
+    }
   }
 
-  function toggleSupervisorStatus(sup: SupervisorAccount) {
-    setSupervisors((prev) => prev.map((s) => (s.id === sup.id ? { ...s, status: s.status === "active" ? "suspended" : "active" } : s)));
+  async function toggleSupervisorStatusHandler(sup: Row) {
+    try {
+      await apiToggleSupervisorStatus(sup.id, sup.status);
+      await loadAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not update supervisor status.");
+    }
   }
 
-  function toggleSupervisorFinance(sup: SupervisorAccount) {
-    // TODO: PATCH /api/admin/supervisors/:id — flips whether this supervisor can see wallet/escrow data
-    setSupervisors((prev) => prev.map((s) => (s.id === sup.id ? { ...s, canViewFinancials: !s.canViewFinancials } : s)));
+  async function toggleSupervisorFinanceHandler(sup: Row) {
+    try {
+      await apiToggleSupervisorFinance(sup.id, sup.can_view_financials);
+      await loadAll();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not update financial access.");
+    }
   }
 
   const navItems: { key: View; label: string; badge?: number }[] = [
@@ -100,9 +157,14 @@ export default function AdminDashboard() {
     { key: "jobs", label: "All jobs" },
     { key: "applications", label: "Runner applications", badge: pendingApplications.length },
     { key: "runners", label: "Runners" },
+    { key: "customers", label: "Customers" },
     { key: "supervisors", label: "Supervisors" },
     { key: "finance", label: "Finance" },
   ];
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center text-ink-soft text-[14px]">Loading admin dashboard…</div>;
+  }
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-[250px_1fr] min-h-screen bg-lavender-100">
@@ -125,14 +187,21 @@ export default function AdminDashboard() {
       </aside>
 
       <main className="px-5 md:px-9 py-7">
+        {error && (
+          <div className="mb-5 px-4 py-3 rounded-xl bg-[#fdeaea] text-[#a83232] text-[13px] flex items-center justify-between gap-3">
+            {error}
+            <button onClick={loadAll} className="underline font-semibold flex-shrink-0">Retry</button>
+          </div>
+        )}
+
         {view === "overview" && (
           <>
-            <PageHeader title="Admin overview" subtitle="Platform-wide status across every town." />
+            <PageHeader title="Admin overview" subtitle="Platform-wide status across every town — updates live." />
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">
               <StatCard label="Jobs on platform" value={String(jobs.length)} />
               <StatCard label="Active runners" value={String(activeRunners.length)} />
+              <StatCard label="Customers" value={String(customers.length)} />
               <StatCard label="Pending applications" value={String(pendingApplications.length)} warn={pendingApplications.length > 0} />
-              <StatCard label="Platform revenue" value={`R${revenue.toFixed(2)}`} />
             </div>
             {pendingApplications.length > 0 && (
               <div className="bg-white rounded-2xl border border-line p-5">
@@ -143,7 +212,7 @@ export default function AdminDashboard() {
                 {pendingApplications.slice(0, 3).map((a) => (
                   <div key={a.id} className="flex items-center justify-between gap-3 py-2.5 border-b border-line last:border-b-0">
                     <div>
-                      <p className="text-[13.5px] font-medium">{a.name} {a.surname}</p>
+                      <p className="text-[13.5px] font-medium">{a.profiles?.name} {a.profiles?.surname}</p>
                       <p className="text-[12px] text-ink-soft">{a.town}{!isApplicationComplete(a) && " · Missing documents"}</p>
                     </div>
                     <Button size="md" onClick={() => setView("applications")}>Review</Button>
@@ -176,15 +245,15 @@ export default function AdminDashboard() {
                   {filteredJobs.map((j) => (
                     <tr key={j.id}>
                       <td className="px-4 py-3 text-[13px] border-b border-line">
-                        <span className="font-mono text-[11px] text-ink-soft block">#{j.id}</span>
+                        <span className="font-mono text-[11px] text-ink-soft block">#{j.display_id}</span>
                         {j.title}
                       </td>
                       <td className="px-4 py-3 text-[13px] border-b border-line">{j.town}</td>
-                      <td className="px-4 py-3 text-[13px] border-b border-line">{j.customerName}</td>
-                      <td className="px-4 py-3 text-[13px] border-b border-line">{j.runnerName ?? "Unassigned"}</td>
+                      <td className="px-4 py-3 text-[13px] border-b border-line">{j.customer_profiles?.profiles?.name ?? "—"}</td>
+                      <td className="px-4 py-3 text-[13px] border-b border-line">{j.runner_profiles?.profiles?.name ?? "Unassigned"}</td>
                       <td className="px-4 py-3 border-b border-line"><JobStatusPill status={j.status} /></td>
-                      <td className="px-4 py-3 text-[13px] font-semibold border-b border-line">R{j.price}</td>
-                      <td className="px-4 py-3 text-[13px] text-ink-soft border-b border-line">R{j.platformFee.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-[13px] font-semibold border-b border-line">R{j.price ?? j.budget ?? 0}</td>
+                      <td className="px-4 py-3 text-[13px] text-ink-soft border-b border-line">{j.platform_fee ? `R${Number(j.platform_fee).toFixed(2)}` : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -197,12 +266,17 @@ export default function AdminDashboard() {
           <>
             <PageHeader title="Runner applications" subtitle="Review ID, headshot, bank and address proof before approving a runner." />
             <div className="flex flex-col gap-3">
-              {applications.filter((a) => a.status === "pending").length === 0 ? (
+              {applications.length === 0 ? (
                 <p className="text-[13.5px] text-ink-soft py-8 text-center">No pending applications.</p>
               ) : (
-                applications
-                  .filter((a) => a.status === "pending")
-                  .map((a) => <ApplicationRow key={a.id} application={a} onApprove={() => approveApplication(a)} onReject={(reason) => rejectApplication(a, reason)} />)
+                applications.map((a) => (
+                  <ApplicationRow
+                    key={a.id}
+                    application={a}
+                    onApprove={() => approveApplicationHandler(a)}
+                    onReject={(reason) => rejectApplicationHandler(a, reason)}
+                  />
+                ))
               )}
             </div>
           </>
@@ -212,20 +286,39 @@ export default function AdminDashboard() {
           <>
             <PageHeader title="Runners" subtitle="Everyone currently approved to accept jobs." />
             <div className="bg-white rounded-2xl border border-line overflow-hidden">
+              {runners.length === 0 && <p className="p-6 text-[13.5px] text-ink-soft">No approved runners yet.</p>}
               {runners.map((r) => (
                 <div key={r.id} className="flex items-center justify-between gap-3 px-5 py-4 border-b border-line last:border-b-0 flex-wrap">
                   <div>
-                    <p className="text-[13.5px] font-semibold">{r.name}</p>
-                    <p className="text-[12px] text-ink-soft">{r.town} · {r.completedJobs} jobs · ★ {r.rating.toFixed(1)}</p>
+                    <p className="text-[13.5px] font-semibold">{r.profiles?.name} {r.profiles?.surname}</p>
+                    <p className="text-[12px] text-ink-soft">{r.town} · {r.completed_jobs} jobs · ★ {Number(r.rating).toFixed(1)}</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className={`text-[11.5px] font-semibold px-[11px] py-[5px] rounded-full ${r.status === "active" ? "bg-[#e9faf1] text-[#1f9d5c]" : "bg-[#f1f1f5] text-ink-soft"}`}>
                       {r.status === "active" ? "Active" : "Suspended"}
                     </span>
-                    <Button size="md" variant="ghost" onClick={() => toggleRunnerStatus(r)}>
+                    <Button size="md" variant="ghost" onClick={() => toggleRunnerStatusHandler(r)}>
                       {r.status === "active" ? "Suspend" : "Reactivate"}
                     </Button>
                   </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {view === "customers" && (
+          <>
+            <PageHeader title="Customers" subtitle="Everyone signed up as a customer, and their wallet balance." />
+            <div className="bg-white rounded-2xl border border-line overflow-hidden">
+              {customers.length === 0 && <p className="p-6 text-[13.5px] text-ink-soft">No customers yet.</p>}
+              {customers.map((c) => (
+                <div key={c.id} className="flex items-center justify-between gap-3 px-5 py-4 border-b border-line last:border-b-0 flex-wrap">
+                  <div>
+                    <p className="text-[13.5px] font-semibold">{c.profiles?.name} {c.profiles?.surname}</p>
+                    <p className="text-[12px] text-ink-soft">{c.profiles?.email} · {c.profiles?.phone}</p>
+                  </div>
+                  <span className="text-[13px] font-semibold">R{Number(c.wallets?.[0]?.balance ?? 0).toFixed(2)}</span>
                 </div>
               ))}
             </div>
@@ -245,29 +338,29 @@ export default function AdminDashboard() {
               {supervisors.map((s) => (
                 <div key={s.id} className="flex items-center justify-between gap-3 px-5 py-4 border-b border-line last:border-b-0 flex-wrap">
                   <div>
-                    <p className="text-[13.5px] font-semibold">{s.name}</p>
-                    <p className="text-[12px] text-ink-soft">{s.email} · {s.town}</p>
+                    <p className="text-[13.5px] font-semibold">{s.profiles?.name} {s.profiles?.surname}</p>
+                    <p className="text-[12px] text-ink-soft">{s.profiles?.email} · {s.town ?? "All towns"}</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <button
-                      onClick={() => toggleSupervisorFinance(s)}
+                      onClick={() => toggleSupervisorFinanceHandler(s)}
                       className={`text-[11.5px] font-semibold px-[11px] py-[5px] rounded-full transition ${
-                        s.canViewFinancials ? "bg-lavender-100 text-indigo-600" : "bg-[#f1f1f5] text-ink-soft"
+                        s.can_view_financials ? "bg-lavender-100 text-indigo-600" : "bg-[#f1f1f5] text-ink-soft"
                       }`}
                     >
-                      {s.canViewFinancials ? "Can view financials" : "No financial access"}
+                      {s.can_view_financials ? "Can view financials" : "No financial access"}
                     </button>
                     <span className={`text-[11.5px] font-semibold px-[11px] py-[5px] rounded-full ${s.status === "active" ? "bg-[#e9faf1] text-[#1f9d5c]" : "bg-[#f1f1f5] text-ink-soft"}`}>
                       {s.status === "active" ? "Active" : "Suspended"}
                     </span>
-                    <Button size="md" variant="ghost" onClick={() => toggleSupervisorStatus(s)}>
+                    <Button size="md" variant="ghost" onClick={() => toggleSupervisorStatusHandler(s)}>
                       {s.status === "active" ? "Suspend" : "Reactivate"}
                     </Button>
                   </div>
                 </div>
               ))}
             </div>
-            {showAddSupervisor && <AddSupervisorModal onClose={() => setShowAddSupervisor(false)} onCreate={addSupervisor} />}
+            {showAddSupervisor && <AddSupervisorModal onClose={() => setShowAddSupervisor(false)} onCreate={addSupervisorHandler} />}
           </>
         )}
 
@@ -275,18 +368,18 @@ export default function AdminDashboard() {
           <>
             <PageHeader title="Finance" subtitle="Admin-only view of platform revenue and job values." />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-7 max-w-[800px]">
-              <StatCard label="Total handled (completed jobs)" value={`R${totalHandled.toFixed(2)}`} />
-              <StatCard label="Platform fees earned" value={`R${revenue.toFixed(2)}`} />
-              <StatCard label="Completed jobs" value={String(jobs.filter((j) => j.status === "completed").length)} />
+              <StatCard label="Total handled (completed jobs)" value={`R${finance.totalHandled.toFixed(2)}`} />
+              <StatCard label="Platform fees earned" value={`R${finance.revenue.toFixed(2)}`} />
+              <StatCard label="Completed jobs" value={String(finance.completedCount)} />
             </div>
             <div className="bg-white rounded-2xl border border-line overflow-hidden max-w-[800px]">
               <div className="px-5 py-3.5 border-b border-line"><h3 className="text-[14px] font-semibold">Completed job payouts</h3></div>
               {jobs.filter((j) => j.status === "completed").map((j) => (
                 <div key={j.id} className="flex items-center justify-between px-5 py-3.5 border-b border-line last:border-b-0 text-[13px]">
-                  <span>#{j.id} · {j.title}</span>
+                  <span>#{j.display_id} · {j.title}</span>
                   <span>
                     <span className="font-semibold">R{j.price}</span>{" "}
-                    <span className="text-ink-soft">(fee R{j.platformFee.toFixed(2)})</span>
+                    <span className="text-ink-soft">(fee R{Number(j.platform_fee ?? 0).toFixed(2)})</span>
                   </span>
                 </div>
               ))}
@@ -298,41 +391,32 @@ export default function AdminDashboard() {
   );
 }
 
-function DocRow({ label, doc }: { label: string; doc: KYCDocument | null }) {
+function DocRow({ label, path }: { label: string; path: string | null }) {
   return (
     <div className="flex items-center justify-between gap-3 px-3 py-2.5 border-[1.5px] border-line rounded-lg">
       <div>
         <p className="text-[12px] text-ink-soft">{label}</p>
-        <p className={`text-[13px] font-medium ${!doc ? "text-[#a83232]" : ""}`}>{doc ? doc.fileName : "Not submitted"}</p>
+        <p className={`text-[13px] font-medium ${!path ? "text-[#a83232]" : ""}`}>{path ? "Submitted" : "Not submitted"}</p>
       </div>
-      {doc && (
-        // TODO: link to the real stored file URL once uploads go to real storage
-        <button type="button" className="text-[12px] text-indigo-600 font-semibold flex-shrink-0">View</button>
-      )}
     </div>
   );
 }
 
-function ApplicationRow({ application, onApprove, onReject }: { application: RunnerApplication; onApprove: () => void; onReject: (reason: string) => void }) {
+function ApplicationRow({ application, onApprove, onReject }: { application: Row; onApprove: () => void; onReject: (reason: string) => void }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
-  const complete = isApplicationComplete(application);
+  const complete = isApplicationComplete(application as Parameters<typeof isApplicationComplete>[0]);
   return (
     <div className="bg-white rounded-2xl border border-line p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
         <div>
-          <p className="text-[14.5px] font-semibold">{application.name} {application.surname}</p>
-          <p className="text-[12.5px] text-ink-soft">{application.town} · Applied {new Date(application.appliedAt).toLocaleDateString()}</p>
+          <p className="text-[14.5px] font-semibold">{application.profiles?.name} {application.profiles?.surname}</p>
+          <p className="text-[12.5px] text-ink-soft">{application.town} · Applied {new Date(application.applied_at).toLocaleDateString()}</p>
         </div>
         {!rejecting && (
           <div className="flex gap-2">
             <Button size="md" variant="ghost" onClick={() => setRejecting(true)} className="!text-[#a83232] hover:!border-[#a83232]">Reject</Button>
-            <Button
-              size="md"
-              onClick={onApprove}
-              disabled={!complete}
-              className={!complete ? "opacity-50 pointer-events-none" : ""}
-            >
+            <Button size="md" onClick={onApprove} disabled={!complete} className={!complete ? "opacity-50 pointer-events-none" : ""}>
               Approve
             </Button>
           </div>
@@ -340,18 +424,18 @@ function ApplicationRow({ application, onApprove, onReject }: { application: Run
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12.5px] mb-3.5">
-        <DetailRow label="ID number" value={application.idNumber} />
+        <DetailRow label="ID number" value={application.id_number} />
         <DetailRow label="Address" value={application.address} />
-        <DetailRow label="Phone" value={application.phone} />
-        <DetailRow label="Email" value={application.email} />
+        <DetailRow label="Phone" value={application.profiles?.phone} />
+        <DetailRow label="Email" value={application.profiles?.email} />
       </div>
 
       <p className="text-[11.5px] uppercase tracking-wide text-ink-soft mb-2">Verification documents</p>
       <div className="grid grid-cols-2 gap-2.5">
-        <DocRow label="Headshot" doc={application.headshot} />
-        <DocRow label="ID document" doc={application.idDocument} />
-        <DocRow label="Proof of bank account" doc={application.bankProof} />
-        <DocRow label="Proof of address" doc={application.addressProof} />
+        <DocRow label="Headshot" path={application.headshot_path} />
+        <DocRow label="ID document" path={application.id_document_path} />
+        <DocRow label="Proof of bank account" path={application.bank_proof_path} />
+        <DocRow label="Proof of address" path={application.address_proof_path} />
       </div>
       {!complete && (
         <p className="text-[12px] text-[#a83232] mt-2.5">Missing documents — approval is disabled until all four are submitted.</p>
@@ -375,17 +459,26 @@ function ApplicationRow({ application, onApprove, onReject }: { application: Run
   );
 }
 
-function AddSupervisorModal({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string, email: string, town: TownName | "All towns", canViewFinancials: boolean) => void }) {
+function AddSupervisorModal({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (name: string, surname: string, email: string, town: TownName | "All towns", canViewFinancials: boolean) => void;
+}) {
   const [name, setName] = useState("");
+  const [surname, setSurname] = useState("");
   const [email, setEmail] = useState("");
   const [town, setTown] = useState<TownName | "All towns">("All towns");
   const [canViewFinancials, setCanViewFinancials] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   return (
     <div className="fixed inset-0 bg-indigo-950/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl p-6 w-full max-w-[400px] shadow-lg2" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-[18px] mb-4">Add a supervisor</h3>
         <div className="flex flex-col gap-3.5 mb-5">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full name" className="px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14px] focus:outline-none focus:border-indigo-500" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="First name" className="px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14px] focus:outline-none focus:border-indigo-500" />
+          <input value={surname} onChange={(e) => setSurname(e.target.value)} placeholder="Surname" className="px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14px] focus:outline-none focus:border-indigo-500" />
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" className="px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14px] focus:outline-none focus:border-indigo-500" />
           <select value={town} onChange={(e) => setTown(e.target.value as TownName | "All towns")} className="px-[15px] py-3 border-[1.5px] border-line rounded-xl text-[14px] focus:outline-none focus:border-indigo-500">
             <option>All towns</option>
@@ -398,7 +491,17 @@ function AddSupervisorModal({ onClose, onCreate }: { onClose: () => void; onCrea
         </div>
         <div className="flex gap-3">
           <Button variant="ghost" block onClick={onClose}>Cancel</Button>
-          <Button block disabled={!name.trim() || !email.trim()} onClick={() => onCreate(name.trim(), email.trim(), town, canViewFinancials)}>Create account</Button>
+          <Button
+            block
+            disabled={!name.trim() || !surname.trim() || !email.trim() || submitting}
+            onClick={async () => {
+              setSubmitting(true);
+              await onCreate(name.trim(), surname.trim(), email.trim(), town, canViewFinancials);
+              setSubmitting(false);
+            }}
+          >
+            {submitting ? "Creating…" : "Create account"}
+          </Button>
         </div>
       </div>
     </div>
@@ -450,8 +553,8 @@ function TownFilterPill({ label, active, onClick }: { label: string; active: boo
   );
 }
 
-function JobStatusPill({ status }: { status: PlatformJob["status"] }) {
-  const map: Record<PlatformJob["status"], { label: string; classes: string }> = {
+function JobStatusPill({ status }: { status: string }) {
+  const map: Record<string, { label: string; classes: string }> = {
     posted: { label: "Posted", classes: "bg-lavender-100 text-indigo-600" },
     accepted: { label: "Accepted", classes: "bg-[#fff2ea] text-coral-dark" },
     in_progress: { label: "In progress", classes: "bg-[#fff2ea] text-coral-dark" },
@@ -460,15 +563,15 @@ function JobStatusPill({ status }: { status: PlatformJob["status"] }) {
     disputed: { label: "Disputed", classes: "bg-[#fdeaea] text-[#d64545]" },
     cancelled: { label: "Cancelled", classes: "bg-[#f1f1f5] text-ink-soft" },
   };
-  const c = map[status];
+  const c = map[status] ?? map.posted;
   return <span className={`text-[11.5px] font-semibold px-[11px] py-[5px] rounded-full whitespace-nowrap ${c.classes}`}>{c.label}</span>;
 }
 
-function DetailRow({ label, value, warn = false }: { label: string; value: string; warn?: boolean }) {
+function DetailRow({ label, value }: { label: string; value?: string }) {
   return (
     <div>
       <p className="text-ink-soft text-[11px]">{label}</p>
-      <p className={`font-medium ${warn ? "text-[#a83232]" : ""}`}>{value}</p>
+      <p className="font-medium">{value || "—"}</p>
     </div>
   );
 }

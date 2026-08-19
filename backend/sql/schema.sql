@@ -1,3 +1,7 @@
+-- ============================================================================
+-- TUMA MINA — SUPABASE SCHEMA
+-- Run this in the Supabase SQL editor, top to bottom, on a fresh project.
+-- ============================================================================
 
 -- ---------------------------------------------------------------------------
 -- EXTENSIONS
@@ -65,13 +69,12 @@ create table public.wallets (
 create table public.wallet_transactions (
   id uuid primary key default uuid_generate_v4(),
   customer_id uuid not null references public.customer_profiles(id) on delete cascade,
-  task_id uuid references public.tasks(id) on delete set null,
+  task_id uuid, -- FK to tasks(id) added later via ALTER TABLE, once tasks exists
   type wallet_tx_type not null,
   amount numeric(10,2) not null check (amount > 0),
   description text not null,
   created_at timestamptz not null default now()
 );
-
 
 -- ---------------------------------------------------------------------------
 -- RUNNER APPLICATIONS (KYC) + APPROVED RUNNERS
@@ -196,7 +199,8 @@ create table public.task_ratings (
 
 -- ---------------------------------------------------------------------------
 -- STORAGE BUCKETS
-
+-- Private buckets — files are only reachable via signed URLs generated
+-- server-side (see backend code), never public.
 -- ---------------------------------------------------------------------------
 insert into storage.buckets (id, name, public) values
   ('runner-kyc', 'runner-kyc', false),
@@ -220,7 +224,7 @@ alter table public.quote_history enable row level security;
 alter table public.task_ratings enable row level security;
 
 -- Helper: current user's role, without recursive RLS lookups.
-create or replace function public.current_role()
+create or replace function public.app_current_role()
 returns user_role
 language sql stable security definer set search_path = public as $$
   select role from public.profiles where id = auth.uid();
@@ -309,7 +313,7 @@ create policy "tasks: read scoped" on public.tasks
     or runner_id = auth.uid()
     or is_admin()
     or is_supervisor()
-    or (status = 'posted' and current_role() = 'runner') -- open jobs visible to all runners in-town
+    or (status = 'posted' and app_current_role() = 'runner') -- open jobs visible to all runners in-town
   );
 create policy "tasks: customer insert" on public.tasks
   for insert with check (customer_id = auth.uid());

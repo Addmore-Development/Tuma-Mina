@@ -3,6 +3,9 @@ import { Link, useNavigate } from "react-router-dom";
 import Logo from "../components/Logo";
 import Button from "../components/Button";
 import { IconCamera, IconClose, IconDocument } from "../Customer/icons";
+import { signUpCustomer, signUpRunner } from "../lib/supabase/auth";
+import type { TownName } from "../lib/supabase/types";
+import { TOWNS } from "../types/platform";
 
 type Role = "client" | "runner";
 
@@ -59,13 +62,16 @@ export default function Register() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Runner-only KYC uploads
+  // Runner-only fields
+  const [town, setTown] = useState<TownName>(TOWNS[0]);
   const [headshot, setHeadshot] = useState<File | null>(null);
   const [idDocument, setIdDocument] = useState<File | null>(null);
   const [bankProof, setBankProof] = useState<File | null>(null);
   const [addressProof, setAddressProof] = useState<File | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [confirmEmailNotice, setConfirmEmailNotice] = useState(false);
 
   function validate() {
     const next: Record<string, string> = {};
@@ -86,24 +92,53 @@ export default function Register() {
     return Object.keys(next).length === 0;
   }
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!validate()) return;
+    setSubmitting(true);
+    setErrors({});
 
-    if (role === "client") {
-      // TODO: POST /api/auth/register/customer
-      // { name, surname, idNumber, address, phone, email, password }
-      navigate("/customer");
-      return;
+    try {
+      if (role === "client") {
+        const result = await signUpCustomer({ name, surname, idNumber, address, phone, email, password });
+        if (result.emailConfirmationRequired) {
+          setConfirmEmailNotice(true);
+          setSubmitting(false);
+          return;
+        }
+        navigate("/customer");
+        return;
+      }
+
+      const result = await signUpRunner({
+        name, surname, idNumber, address, phone, email, password, town,
+        headshot: headshot!, idDocument: idDocument!, bankProof: bankProof!, addressProof: addressProof!,
+      });
+      if (result.emailConfirmationRequired) {
+        setConfirmEmailNotice(true);
+        setSubmitting(false);
+        return;
+      }
+      navigate("/runner");
+    } catch (err) {
+      setErrors({ form: err instanceof Error ? err.message : "Something went wrong. Please try again." });
+      setSubmitting(false);
     }
+  }
 
-    // TODO: POST /api/auth/register/runner as multipart/form-data
-    // { name, surname, idNumber, address, phone, email, password,
-    //   headshot, idDocument, bankProof, addressProof }
-    // Backend creates the RunnerApplication with status "pending" and all
-    // four KYCDocument fields — admin must approve before the runner can
-    // accept jobs (see AdminDashboard's Applications tab).
-    navigate("/runner");
+  if (confirmEmailNotice) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6 bg-lavender-100">
+        <div className="bg-white rounded-2xl border border-line p-8 max-w-[440px] text-center">
+          <h2 className="text-[20px] mb-2">Check your email</h2>
+          <p className="text-[13.5px] text-ink-soft mb-5 leading-relaxed">
+            We've sent a confirmation link to <strong>{email}</strong>. Confirm your address, then log in
+            {role === "runner" ? " to finish submitting your verification documents." : " to get started."}
+          </p>
+          <Link to="/login"><Button variant="primary">Go to login</Button></Link>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -200,6 +235,16 @@ export default function Register() {
           </Field>
 
           {role === "runner" && (
+            <Field label="Town">
+              <select value={town} onChange={(e) => setTown(e.target.value as TownName)} className={inputClass(false)}>
+                {TOWNS.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+
+          {role === "runner" && (
             <div className="mb-[6px] p-4 rounded-xl bg-lavender-100">
               <p className="text-[13px] font-semibold mb-1">Runner verification documents</p>
               <p className="text-[12px] text-ink-soft mb-3">
@@ -221,8 +266,12 @@ export default function Register() {
             I agree to the Terms of Service and confirm the details and documents I submit are accurate.
           </label>
 
-          <Button type="submit" variant="primary" size="lg" block disabled={!agreed}>
-            {role === "runner" ? "Submit for verification" : "Create account"}
+          {errors.form && (
+            <div className="mb-5 px-4 py-3 rounded-xl bg-[#fdeaea] text-[#a83232] text-[13px]">{errors.form}</div>
+          )}
+
+          <Button type="submit" variant="primary" size="lg" block disabled={!agreed || submitting}>
+            {submitting ? "Submitting..." : role === "runner" ? "Submit for verification" : "Create account"}
           </Button>
 
           <p className="text-center mt-6 text-sm text-ink-soft">

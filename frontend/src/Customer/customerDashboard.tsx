@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import Logo from "../components/Logo";
 import type { CustomerProfile, CustomerTask, WalletTransaction } from "../types/types";
@@ -13,6 +13,25 @@ import { categoryIcons } from "./categoryIcons";
 import { IconAlert, IconBell, IconClock, IconGrid, IconMenu, IconPackage, IconPlus, IconSearch, IconUser, IconWallet } from "./icons";
 import { useNow } from "./useNow";
 import { formatRelativeTime } from "./formatRelativeTime";
+import {
+  fetchMyTasks,
+  fetchMyProfile,
+  fetchWallet,
+  fetchSavedLocations,
+  postTask as apiPostTask,
+  updateTaskDetails as apiUpdateTaskDetails,
+  deleteTask as apiDeleteTask,
+  cancelTask as apiCancelTask,
+  raiseDispute as apiRaiseDispute,
+  acceptQuote as apiAcceptQuote,
+  approveAndRelease as apiApproveAndRelease,
+  submitRating as apiSubmitRating,
+  devTopUpWallet,
+  updateCustomerProfile as apiUpdateCustomerProfile,
+  saveLocation as apiSaveLocation,
+  type PostTaskInput,
+} from "../lib/supabase/customer";
+import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
 
 interface SavedLocation {
   label: string;
@@ -28,88 +47,6 @@ interface NotificationItem {
   taskId?: string;
 }
 
-// TODO: replace with GET /api/customer/tasks on mount, and swap the useState calls
-// below for the corresponding POST/PATCH calls as noted in each component.
-const initialTasks: CustomerTask[] = [
-  {
-    id: "TM-4821",
-    title: "Collect a parcel from the courier depot",
-    category: "Delivery",
-    description: "Waybill number will be sent over WhatsApp once you accept.",
-    deliveryMode: "location",
-    location: "Rustenburg CBD",
-    deadline: new Date(Date.now() + 26 * 3_600_000).toISOString(),
-    budget: 90,
-    status: "in_progress",
-    quotes: [{ id: "q-4821", runnerName: "Kagiso T.", runnerRating: 4.9, price: 90, status: "open" }],
-    acceptedQuote: { id: "q-4821", runnerName: "Kagiso T.", runnerRating: 4.9, price: 90, status: "open" },
-    createdAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
-  },
-  {
-    id: "TM-4790",
-    title: "Queue at Home Affairs for an ID renewal",
-    category: "Queuing",
-    description: "",
-    deliveryMode: "person",
-    location: "Home Affairs, Rustenburg",
-    deadline: new Date(Date.now() + 3 * 24 * 3_600_000).toISOString(),
-    budget: null,
-    status: "posted",
-    quotes: [
-      { id: "q-4790a", runnerName: "Sipho R.", runnerRating: 4.7, price: 60, note: "Available from 7am.", status: "open" },
-      { id: "q-4790b", runnerName: "Ayanda B.", runnerRating: 4.5, price: 55, status: "open" },
-    ],
-    pin: "5217",
-    createdAt: new Date(Date.now() - 20 * 3_600_000).toISOString(),
-  },
-  {
-    id: "TM-4703",
-    title: "Fetch signed lease documents",
-    category: "Document",
-    description: "",
-    deliveryMode: "location",
-    location: "Fourways",
-    deadline: new Date(Date.now() - 5 * 3_600_000).toISOString(), // overdue on purpose, for the demo
-    budget: 70,
-    status: "posted",
-    quotes: [{ id: "q-4703", runnerName: "Ayanda B.", runnerRating: 4.5, price: 70, status: "open" }],
-    createdAt: new Date(Date.now() - 30 * 3_600_000).toISOString(),
-  },
-  {
-    id: "TM-4756",
-    title: "Grocery run for the week",
-    category: "Shopping",
-    description: "List will be shared once accepted.",
-    deliveryMode: "location",
-    location: "Waterfall Mall, Rustenburg",
-    deadline: new Date(Date.now() - 2 * 24 * 3_600_000).toISOString(),
-    budget: 250,
-    status: "completed",
-    quotes: [{ id: "q-4756", runnerName: "Palesa N.", runnerRating: 4.6, price: 250, status: "open" }],
-    acceptedQuote: { id: "q-4756", runnerName: "Palesa N.", runnerRating: 4.6, price: 250, status: "open" },
-    proofPhotoUrl: "mock-proof-photo",
-    completedAt: new Date(Date.now() - 2 * 24 * 3_600_000 + 3_600_000).toISOString(),
-    createdAt: new Date(Date.now() - 3 * 24 * 3_600_000).toISOString(),
-    rating: { stars: 5, comment: "Quick and kept me updated." },
-  },
-];
-
-const initialTransactions: WalletTransaction[] = [
-  { id: "t1", taskId: "TM-4821", type: "hold", amount: 90, date: new Date(Date.now() - 2 * 3_600_000).toISOString(), description: "Held for TM-4821 · Collect a parcel" },
-  { id: "t2", taskId: "TM-4756", type: "release", amount: 250, date: new Date(Date.now() - 2 * 24 * 3_600_000 + 3_600_000).toISOString(), description: "Released to Palesa N. · TM-4756" },
-  { id: "t3", type: "topup", amount: 500, date: new Date(Date.now() - 4 * 24 * 3_600_000).toISOString(), description: "Wallet top-up" },
-];
-
-const initialProfile: CustomerProfile = {
-  name: "Kagiso T.",
-  phone: "+27 79 399 0608",
-  email: "kagiso@example.com",
-  notifyTaskUpdates: true,
-  notifyPromotions: false,
-};
-
-const initialSavedLocations: SavedLocation[] = [{ label: "Home", address: "Rustenburg CBD" }];
-
 type View = "overview" | "post" | "tasks" | "task-detail" | "wallet" | "settings";
 type TaskFilter = "all" | "active" | "closed";
 type TaskSort = "newest" | "deadline";
@@ -117,12 +54,19 @@ type StatusFilter = "awaiting_confirmation" | "overdue" | null;
 
 const CLOSED_STATUSES: CustomerTask["status"][] = ["completed", "cancelled", "disputed"];
 
+const emptyProfile: CustomerProfile = {
+  name: "", surname: "", idNumber: "", address: "", phone: "", email: "",
+  notifyTaskUpdates: true, notifyPromotions: false,
+};
+
 export default function CustomerDashboard() {
-  const [tasks, setTasks] = useState<CustomerTask[]>(initialTasks);
-  const [transactions, setTransactions] = useState<WalletTransaction[]>(initialTransactions);
-  const [balance, setBalance] = useState(180);
-  const [profile, setProfile] = useState<CustomerProfile>(initialProfile);
-  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>(initialSavedLocations);
+  const [tasks, setTasks] = useState<CustomerTask[]>([]);
+  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  const [balance, setBalance] = useState(0);
+  const [profile, setProfile] = useState<CustomerProfile>(emptyProfile);
+  const [savedLocations, setSavedLocations] = useState<SavedLocation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [view, setView] = useState<View>("overview");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -138,6 +82,37 @@ export default function CustomerDashboard() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const idCounter = useRef(0);
+
+  async function loadAll() {
+    try {
+      const [myTasks, myProfile, wallet, locations] = await Promise.all([
+        fetchMyTasks(),
+        fetchMyProfile(),
+        fetchWallet(),
+        fetchSavedLocations(),
+      ]);
+      setTasks(myTasks);
+      setProfile(myProfile);
+      setBalance(wallet.balance);
+      setTransactions(wallet.transactions);
+      setSavedLocations((locations ?? []).map((l: any) => ({ label: l.label, address: l.address })));
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "Failed to load your dashboard.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAll();
+    const channels = subscribeToTables(
+      [{ table: "tasks" }, { table: "quotes" }, { table: "wallet_transactions" }, { table: "wallets" }],
+      loadAll
+    );
+    return () => unsubscribe(channels);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const activeTask = useMemo(() => tasks.find((t) => t.id === activeTaskId) ?? null, [tasks, activeTaskId]);
   const editingTask = useMemo(() => tasks.find((t) => t.id === editingTaskId) ?? null, [tasks, editingTaskId]);
@@ -216,18 +191,46 @@ export default function CustomerDashboard() {
     setMobileNavOpen(false);
   }
 
-  function handlePostSubmit(task: CustomerTask) {
+  async function handlePostSubmit(task: CustomerTask) {
     const isEdit = !!editingTaskId && tasks.some((t) => t.id === task.id) && editingTaskId === task.id;
-    if (isEdit) {
-      setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)));
-      pushToast("Task updated.", "success", task.id);
-      setEditingTaskId(null);
-      openTask(task.id);
-    } else {
-      setTasks((prev) => [task, ...prev]);
-      setDuplicateSeed(null);
-      pushToast("Task posted — nearby runners have been notified.", "success", task.id);
-      setView("tasks");
+    try {
+      if (isEdit) {
+        await apiUpdateTaskDetails(task.id, {
+          title: task.title,
+          category: task.category,
+          description: task.description,
+          deliveryMode: task.deliveryMode as PostTaskInput["deliveryMode"],
+          location: task.location,
+          deadline: task.deadline,
+          budget: task.budget,
+        });
+        pushToast("Task updated.", "success", task.id);
+        setEditingTaskId(null);
+        await loadAll();
+        openTask(task.id);
+      } else {
+        // NOTE: the post-task form doesn't collect a town yet (see
+        // PostTaskForm.tsx) or keep raw File objects for reference photos
+        // (it converts them to object URLs for preview only) — both are
+        // follow-ups. Defaulting town for now so the task still posts.
+        const created = await apiPostTask({
+          title: task.title,
+          category: task.category,
+          description: task.description,
+          deliveryMode: task.deliveryMode as PostTaskInput["deliveryMode"],
+          location: task.location,
+          town: "Rustenburg",
+          deadline: task.deadline,
+          budget: task.budget,
+          referencePhotoFiles: [],
+        });
+        setDuplicateSeed(null);
+        pushToast("Task posted — nearby runners have been notified.", "success", created.id);
+        await loadAll();
+        setView("tasks");
+      }
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : "Couldn't save that task.", "error");
     }
   }
 
@@ -238,53 +241,67 @@ export default function CustomerDashboard() {
     setView(hadPrefill ? "task-detail" : "overview");
   }
 
-  function handleUpdateTask(updated: CustomerTask) {
-    setTasks((prev) => {
-      const before = prev.find((t) => t.id === updated.id);
-      const next = prev.map((t) => (t.id === updated.id ? updated : t));
+  /**
+   * TaskDetail passes back a fully-mutated CustomerTask for a handful of
+   * different actions (accept quote, cancel, dispute, mark delivered, PIN
+   * confirm...) via a single onUpdate callback. We diff old vs. new status
+   * to figure out which backend call to make, apply the change optimistically
+   * for a snappy UI, then reconcile with the server.
+   */
+  async function handleUpdateTask(updated: CustomerTask) {
+    const before = tasks.find((t) => t.id === updated.id);
+    setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
 
-      // Keep the wallet in sync with task-status transitions so the Wallet tab
-      // reflects escrow holds/releases without a separate round trip.
-      if (before && before.status !== updated.status) {
-        if (updated.status === "accepted" && updated.acceptedQuote) {
-          setBalance((b) => b - updated.acceptedQuote!.price);
-          setTransactions((tx) => [
-            ...tx,
-            { id: `t-${updated.id}-hold`, taskId: updated.id, type: "hold", amount: updated.acceptedQuote!.price, date: new Date().toISOString(), description: `Held for ${updated.id} · ${updated.title}` },
-          ]);
-        }
-        if (updated.status === "completed" && updated.acceptedQuote) {
-          setTransactions((tx) => [
-            ...tx,
-            { id: `t-${updated.id}-release`, taskId: updated.id, type: "release", amount: updated.acceptedQuote!.price, date: new Date().toISOString(), description: `Released to ${updated.acceptedQuote!.runnerName} · ${updated.id}` },
-          ]);
-        }
+    if (!before || before.status === updated.status) return; // no state transition — nothing to persist beyond local edits
+
+    try {
+      if (updated.status === "accepted" && updated.acceptedQuote) {
+        await apiAcceptQuote(updated.id, updated.acceptedQuote.id);
+      } else if (updated.status === "cancelled") {
+        await apiCancelTask(updated.id, updated.cancelReason ?? "");
+      } else if (updated.status === "disputed") {
+        await apiRaiseDispute(updated.id);
       }
-      return next;
-    });
+      await loadAll();
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : "That action couldn't be saved — refreshing.", "error");
+      await loadAll();
+    }
   }
 
-  function approveTask(id: string) {
+  async function approveTask(id: string) {
     const task = tasks.find((t) => t.id === id);
     if (!task) return;
-    // TODO: POST /api/tasks/:id/approve — releases the held amount to the runner's
-    // payout balance and closes out the escrow hold.
-    handleUpdateTask({ ...task, status: "completed", completedAt: new Date().toISOString() });
-    pushToast("Payment released. Task complete!", "success", id);
-    setRatingTaskId(id);
+    try {
+      await apiApproveAndRelease(id);
+      pushToast("Payment released. Task complete!", "success", id);
+      setRatingTaskId(id);
+      await loadAll();
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : "Couldn't release payment.", "error");
+    }
   }
 
-  function handleDeleteTask(id: string) {
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-    pushToast("Removed from your history.", "success");
-    setView("tasks");
+  async function handleDeleteTask(id: string) {
+    try {
+      await apiDeleteTask(id);
+      pushToast("Removed from your history.", "success");
+      setView("tasks");
+      await loadAll();
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : "Couldn't remove that task.", "error");
+    }
   }
 
-  function handleTopUp(amount: number) {
-    setBalance((b) => b + amount);
-    setTransactions((tx) => [...tx, { id: `t-topup-${Date.now()}`, type: "topup", amount, date: new Date().toISOString(), description: "Wallet top-up" }]);
-    setWalletTopUpSuggestion(undefined);
-    pushToast(`R${amount.toFixed(2)} added to your wallet.`, "success");
+  async function handleTopUp(amount: number) {
+    try {
+      await devTopUpWallet(amount);
+      setWalletTopUpSuggestion(undefined);
+      pushToast(`R${amount.toFixed(2)} added to your wallet.`, "success");
+      await loadAll();
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : "Top-up failed.", "error");
+    }
   }
 
   function handleNavigateToWallet(suggested?: number) {
@@ -298,21 +315,40 @@ export default function CustomerDashboard() {
     goTo("tasks");
   }
 
-  function handleRatingSubmit(stars: number, comment: string) {
+  async function handleRatingSubmit(stars: number, comment: string) {
     if (!ratingTaskId) return;
-    setTasks((prev) => prev.map((t) => (t.id === ratingTaskId ? { ...t, rating: { stars, comment } } : t)));
-    setRatingTaskId(null);
-    pushToast("Thanks for the feedback!", "success");
+    try {
+      await apiSubmitRating(ratingTaskId, stars, comment);
+      setRatingTaskId(null);
+      pushToast("Thanks for the feedback!", "success");
+      await loadAll();
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : "Couldn't save your rating.", "error");
+    }
   }
 
-  function handleSaveProfile(next: CustomerProfile) {
-    setProfile(next);
-    pushToast("Settings saved.", "success");
+  async function handleSaveProfile(next: CustomerProfile) {
+    try {
+      await apiUpdateCustomerProfile({
+        name: next.name, surname: next.surname, phone: next.phone, email: next.email,
+        notifyTaskUpdates: next.notifyTaskUpdates, notifyPromotions: next.notifyPromotions,
+      });
+      setProfile(next);
+      pushToast("Settings saved.", "success");
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : "Couldn't save settings.", "error");
+    }
   }
 
-  function handleSaveLocation(loc: SavedLocation) {
-    setSavedLocations((prev) => (prev.some((l) => l.label.toLowerCase() === loc.label.toLowerCase()) ? prev : [...prev, loc]));
-    pushToast(`Saved "${loc.label}" for next time.`, "success");
+  async function handleSaveLocation(loc: SavedLocation) {
+    if (savedLocations.some((l) => l.label.toLowerCase() === loc.label.toLowerCase())) return;
+    try {
+      await apiSaveLocation(loc.label, loc.address);
+      setSavedLocations((prev) => [...prev, loc]);
+      pushToast(`Saved "${loc.label}" for next time.`, "success");
+    } catch (e) {
+      pushToast(e instanceof Error ? e.message : "Couldn't save that location.", "error");
+    }
   }
 
   function handleViewTaskFromTransaction(taskId: string) {

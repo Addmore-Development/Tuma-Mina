@@ -1,7 +1,13 @@
+// types/types.ts
+// Types scoped to the logged-in Customer's own dashboard/view.
+// (See types/platform.ts for the platform-wide equivalents used by Admin,
+// Supervisor, and Runner.)
 
 export type JobType = "Delivery" | "Document" | "Queuing" | "Shopping" | "Errand";
 
-export type DeliveryMode = "location" | "person";
+export type DeliveryMode = "location" | "person" | "courier";
+
+export type CourierProvider = "Courier Guy" | "Pexi";
 
 export type CustomerTaskStatus =
   | "posted"
@@ -50,6 +56,11 @@ export interface CustomerTask {
   // Set when deliveryMode is "person" — shared with the receiver, entered by
   // the runner on hand-off to confirm delivery.
   pin?: string;
+  // Set when deliveryMode is "courier" — the runner must supply these before
+  // the customer can approve/release payment, since there's no PIN or
+  // in-person proof for a third-party courier hand-off.
+  courierProvider?: CourierProvider;
+  trackingNumber?: string;
   proofPhotoUrl?: string;
   deliveredAt?: string;
   // When payment auto-releases to the runner if the customer doesn't

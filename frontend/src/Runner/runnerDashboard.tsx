@@ -1,84 +1,48 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import Logo from "../components/Logo";
 import Button from "../components/Button";
 import type { PlatformJob, RunnerApplication } from "../types/platform";
-
-// TODO: replace with GET /api/runner/me on mount — this stands in for "the logged-in
-// runner's application/profile record" until auth exists.
-const mockApplication: RunnerApplication = {
-  id: "RA-1042",
-  name: "Thabo Molefe",
-  phone: "+27 82 555 0143",
-  email: "thabo@example.com",
-  town: "Rustenburg",
-  idNumber: "9203015555088",
-  bankVerified: true,
-  proofOfAddress: true,
-  appliedAt: new Date(Date.now() - 2 * 86_400_000).toISOString(),
-  status: "approved", // flip to "pending" or "rejected" to preview those states
-};
-
-// TODO: replace with GET /api/runner/jobs?town=X&status=posted
-const initialAvailableJobs: PlatformJob[] = [
-  {
-    id: "TM-4703",
-    title: "Fetch signed lease documents",
-    category: "Document",
-    town: "Rustenburg",
-    location: "Fourways",
-    customerName: "Lindiwe D.",
-    status: "posted",
-    price: 70,
-    platformFee: 10.5,
-    postedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
-    deadline: new Date(Date.now() + 5 * 3_600_000).toISOString(),
-  },
-  {
-    id: "TM-4790",
-    title: "Queue at Home Affairs for an ID renewal",
-    category: "Queuing",
-    town: "Rustenburg",
-    location: "Home Affairs, Rustenburg",
-    customerName: "Kagiso T.",
-    status: "posted",
-    price: 60,
-    platformFee: 9,
-    postedAt: new Date(Date.now() - 20 * 3_600_000).toISOString(),
-    deadline: new Date(Date.now() + 3 * 24 * 3_600_000).toISOString(),
-  },
-];
-
-// TODO: replace with GET /api/runner/jobs?status=in_progress,accepted
-const initialMyJobs: PlatformJob[] = [
-  {
-    id: "TM-4821",
-    title: "Collect a parcel from the courier depot",
-    category: "Delivery",
-    town: "Rustenburg",
-    location: "Rustenburg CBD",
-    customerName: "Kagiso T.",
-    status: "in_progress",
-    price: 90,
-    platformFee: 13.5,
-    postedAt: new Date(Date.now() - 5 * 3_600_000).toISOString(),
-    deadline: new Date(Date.now() + 26 * 3_600_000).toISOString(),
-  },
-];
+import { fetchMyApplication, fetchAvailableJobs, fetchMyJobs, acceptAvailableJob } from "../lib/supabase/runner";
+import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
 
 type View = "available" | "myjobs" | "earnings" | "profile";
 
 export default function RunnerDashboard() {
-  const [application] = useState<RunnerApplication>(mockApplication);
-  const [availableJobs, setAvailableJobs] = useState<PlatformJob[]>(initialAvailableJobs);
-  const [myJobs, setMyJobs] = useState<PlatformJob[]>(initialMyJobs);
+  const [application, setApplication] = useState<RunnerApplication | null>(null);
+  const [availableJobs, setAvailableJobs] = useState<PlatformJob[]>([]);
+  const [myJobs, setMyJobs] = useState<PlatformJob[]>([]);
   const [view, setView] = useState<View>("available");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [accepting, setAcceptingId] = useState<string | null>(null);
+
+  const loadAll = useCallback(async () => {
+    try {
+      const app = await fetchMyApplication();
+      setApplication(app);
+      setError(null);
+
+      if (app.status === "approved") {
+        const [avail, mine] = await Promise.all([fetchAvailableJobs(app.town), fetchMyJobs()]);
+        setAvailableJobs(avail);
+        setMyJobs(mine);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load your runner data.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAll();
+    const channels = subscribeToTables([{ table: "tasks" }, { table: "runner_applications" }], loadAll);
+    return () => unsubscribe(channels);
+  }, [loadAll]);
 
   // Runners only ever see jobs posted in their own town.
-  const townJobs = useMemo(
-    () => availableJobs.filter((j) => j.town === application.town),
-    [availableJobs, application.town]
-  );
+  const townJobs = availableJobs;
 
   const earnings = useMemo(() => {
     const completed = myJobs.filter((j) => j.status === "completed");
@@ -86,12 +50,40 @@ export default function RunnerDashboard() {
     return { total, jobCount: completed.length };
   }, [myJobs]);
 
-  function acceptJob(job: PlatformJob) {
-    // TODO: POST /api/runner/jobs/:id/accept
-    setAvailableJobs((prev) => prev.filter((j) => j.id !== job.id));
-    setMyJobs((prev) => [{ ...job, status: "accepted", runnerName: application.name }, ...prev]);
-    setView("myjobs");
+  async function acceptJob(job: PlatformJob) {
+    setAcceptingId(job.id);
+    try {
+      await acceptAvailableJob(job.id);
+      await loadAll();
+      setView("myjobs");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't accept that job — it may already be taken.");
+    } finally {
+      setAcceptingId(null);
+    }
   }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-lavender-100 flex items-center justify-center">
+        <p className="text-[13.5px] text-ink-soft">Loading your dashboard...</p>
+      </div>
+    );
+  }
+
+  if (error && !application) {
+    return (
+      <div className="min-h-screen bg-lavender-100 flex items-center justify-center px-6">
+        <div className="bg-white rounded-2xl border border-line p-8 max-w-[440px] text-center">
+          <h2 className="text-[20px] mb-2">Couldn't load your dashboard</h2>
+          <p className="text-[13.5px] text-ink-soft mb-5">{error}</p>
+          <Link to="/login"><Button variant="ghost">Back to login</Button></Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (!application) return null;
 
   if (application.status === "pending") {
     return <ApplicationPendingScreen name={application.name} />;
@@ -130,6 +122,7 @@ export default function RunnerDashboard() {
         {view === "available" && (
           <>
             <PageHeader title="Available jobs" subtitle={`Jobs posted in ${application.town} — first accepted, first served.`} />
+            {error && <div className="mb-4 px-4 py-3 rounded-xl bg-[#fdeaea] text-[#a83232] text-[13px]">{error}</div>}
             {townJobs.length === 0 ? (
               <EmptyState text="No jobs waiting in your town right now. Check back soon." />
             ) : (
@@ -143,7 +136,9 @@ export default function RunnerDashboard() {
                     <h4 className="text-[14.5px] font-semibold mb-1.5">{job.title}</h4>
                     <p className="text-[12.5px] text-ink-soft mb-1">{job.location}</p>
                     <p className="text-[12px] text-ink-soft mb-4">Posted by {job.customerName} · Due {new Date(job.deadline).toLocaleDateString()}</p>
-                    <Button size="md" block onClick={() => acceptJob(job)}>Accept job</Button>
+                    <Button size="md" block onClick={() => acceptJob(job)} disabled={accepting === job.id}>
+                      {accepting === job.id ? "Accepting..." : "Accept job"}
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -199,8 +194,8 @@ export default function RunnerDashboard() {
               <DetailRow label="Phone" value={application.phone} />
               <DetailRow label="Email" value={application.email} />
               <DetailRow label="Town" value={application.town} />
-              <DetailRow label="Bank details" value={application.bankVerified ? "Verified" : "Not verified"} />
-              <DetailRow label="Proof of address" value={application.proofOfAddress ? "Verified" : "Not verified"} />
+              <DetailRow label="Bank details" value={application.bankProof?.status === "verified" ? "Verified" : "Not verified"} />
+              <DetailRow label="Proof of address" value={application.addressProof?.status === "verified" ? "Verified" : "Not verified"} />
             </div>
           </>
         )}

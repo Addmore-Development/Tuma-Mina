@@ -2,16 +2,56 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Logo from "../components/Logo";
 import Button from "../components/Button";
+import { logIn, getCurrentUserRole } from "../lib/supabase/auth";
+import { fetchMyApplication } from "../lib/supabase/runner";
+
+const ROLE_ROUTES: Record<string, string> = {
+  customer: "/customer",
+  runner: "/runner",
+  supervisor: "/dashboard",
+  admin: "/admin",
+};
 
 export default function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    // TODO: call POST /api/auth/login, then route by role (supervisor -> /dashboard)
-    navigate("/dashboard");
+    setError("");
+    setLoading(true);
+    try {
+      await logIn(email.trim(), password);
+      const roleInfo = await getCurrentUserRole();
+      if (!roleInfo) {
+        setError("Could not determine your account type. Please contact support.");
+        setLoading(false);
+        return;
+      }
+
+      // Runners with a pending or rejected application still log in, but
+      // RunnerDashboard itself gates the actual dashboard content behind
+      // application status — see RunnerDashboard.tsx's ApplicationPendingScreen.
+      if (roleInfo.role === "runner") {
+        try {
+          await fetchMyApplication();
+        } catch {
+          // No application on file at all — shouldn't happen post-signup,
+          // but fail safe by sending them back to complete registration.
+          setError("No runner application found for this account. Please register again.");
+          setLoading(false);
+          return;
+        }
+      }
+
+      navigate(ROLE_ROUTES[roleInfo.role] ?? "/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed. Check your details and try again.");
+      setLoading(false);
+    }
   }
 
   return (
@@ -24,15 +64,8 @@ export default function Login() {
           Back
         </Button>
       </Link>
-      {/* Side panel */}
       <div className="hidden md:flex flex-col justify-between px-[5vw] py-16 relative overflow-hidden bg-indigo-950 text-white">
-        {/* Background photo — drop your own asset at public/Login.jpg */}
-        <img
-          src="/Login.jpg"
-          alt=""
-          className="absolute inset-0 z-0 w-full h-full object-cover"
-        />
-        {/* Darkening tint for text legibility — adjust the /NN opacity below, or delete this line to remove the effect entirely */}
+        <img src="/Login.jpg" alt="" className="absolute inset-0 z-0 w-full h-full object-cover" />
         <div className="absolute inset-0 z-0 bg-indigo-950/55" />
         <div className="relative z-10"><Logo light /></div>
         <div className="relative z-10 max-w-[380px]">
@@ -59,16 +92,19 @@ export default function Login() {
         </div>
       </div>
 
-      {/* Form */}
       <div className="flex items-center justify-center px-[6vw] py-10">
         <form onSubmit={handleSubmit} className="w-full max-w-[400px]">
           <h2 className="text-[28px] mb-2">Welcome back</h2>
           <p className="text-ink-soft text-[14.5px] mb-8">Log in to track your tasks or manage jobs.</p>
 
+          {error && (
+            <div className="mb-5 px-4 py-3 rounded-xl bg-[#fdeaea] text-[#a83232] text-[13px]">{error}</div>
+          )}
+
           <div className="mb-[18px]">
-            <label className="block text-[13px] font-semibold mb-1.5">Email or phone number</label>
+            <label className="block text-[13px] font-semibold mb-1.5">Email address</label>
             <input
-              type="text"
+              type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
@@ -94,7 +130,9 @@ export default function Login() {
             <a href="#" className="text-indigo-600 font-semibold">Forgot password?</a>
           </div>
 
-          <Button type="submit" variant="primary" size="lg" block>Log in</Button>
+          <Button type="submit" variant="primary" size="lg" block disabled={loading}>
+            {loading ? "Logging in..." : "Log in"}
+          </Button>
 
           <p className="text-center mt-6 text-sm text-ink-soft">
             New to Tuma Mina?{" "}
