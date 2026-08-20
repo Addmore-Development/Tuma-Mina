@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Logo from "../components/Logo";
-import type { PlatformJob, RunnerProfile } from "../types/platform";
+import { TOWNS, type PlatformJob, type RunnerProfile } from "../types/platform";
 import {
   fetchMySupervisorProfile,
   fetchScopedJobs,
@@ -25,6 +25,10 @@ interface CustomerRow {
 export default function SupervisorDashboard() {
   const [view, setView] = useState<View>("jobs");
   const [search, setSearch] = useState("");
+  // Only meaningful for "All towns" supervisors — town-scoped supervisors
+  // are always locked to their own town and never see this control.
+  const [townFilter, setTownFilter] = useState<string>("all");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +47,9 @@ export default function SupervisorDashboard() {
     try {
       const sup = await fetchMySupervisorProfile();
       setCurrentSupervisor(sup);
-      const town = sup.town === "All towns" ? null : sup.town;
+      // "All towns" supervisors can narrow to a single town via the filter
+      // dropdown below; town-scoped supervisors are always locked to sup.town.
+      const town = sup.town === "All towns" ? (townFilter === "all" ? null : townFilter) : sup.town;
 
       const [jbs, rns, custs] = await Promise.all([
         fetchScopedJobs(town),
@@ -63,7 +69,7 @@ export default function SupervisorDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [townFilter]);
 
   useEffect(() => {
     loadAll();
@@ -87,7 +93,10 @@ export default function SupervisorDashboard() {
   // supervisors get every posted job.
   useEffect(() => {
     if (!currentSupervisor) return;
-    const town = currentSupervisor.town === "All towns" ? null : currentSupervisor.town;
+    const town =
+      currentSupervisor.town === "All towns"
+        ? (townFilter === "all" ? null : townFilter)
+        : currentSupervisor.town;
     const channels = subscribeToTables(
       [
         {
@@ -112,7 +121,7 @@ export default function SupervisorDashboard() {
     return () => {
       unsubscribe(channels);
     };
-  }, [currentSupervisor?.town]);
+  }, [currentSupervisor?.town, townFilter]);
 
   const scopedJobs = jobs; // already town-scoped server-side by fetchScopedJobs
   const filteredJobs = useMemo(() => {
@@ -146,17 +155,56 @@ export default function SupervisorDashboard() {
     - moneyEvents.filter((m) => m.type === "release" || m.type === "refund").reduce((s, m) => s + m.amount, 0);
   const released = moneyEvents.filter((m) => m.type === "release").reduce((s, m) => s + m.amount, 0);
 
+  const navItemsList = (
+    <>
+      <NavItem label="Jobs" active={view === "jobs"} onClick={() => { setView("jobs"); setMobileNavOpen(false); }} badge={exceptionsCount} />
+      <NavItem label="Runners" active={view === "runners"} onClick={() => { setView("runners"); setMobileNavOpen(false); }} />
+      <NavItem label="Customers" active={view === "customers"} onClick={() => { setView("customers"); setMobileNavOpen(false); }} />
+      {currentSupervisor.canViewFinancials && (
+        <NavItem label="Money movement" active={view === "money"} onClick={() => { setView("money"); setMobileNavOpen(false); }} />
+      )}
+    </>
+  );
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-[250px_1fr] min-h-screen bg-lavender-100">
+    <div className="md:grid md:grid-cols-[250px_1fr] min-h-screen bg-lavender-100">
+      {/* Mobile top bar */}
+      <div className="md:hidden sticky top-0 z-40 flex items-center justify-between bg-indigo-950 text-white px-4 py-3.5">
+        <button onClick={() => setMobileNavOpen(true)} aria-label="Open menu" className="p-1 -ml-1 text-2xl leading-none">☰</button>
+        <Logo light />
+        <span className="text-[11px] font-mono uppercase tracking-wider text-indigo-300">Supervisor</span>
+      </div>
+
+      {/* Mobile off-canvas nav */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-indigo-950/50" onClick={() => setMobileNavOpen(false)} />
+          <aside className="absolute left-0 top-0 bottom-0 w-[270px] bg-indigo-950 text-white px-[18px] py-[22px] flex flex-col overflow-y-auto">
+            <div className="flex items-center justify-between mb-8">
+              <Logo light />
+              <button onClick={() => setMobileNavOpen(false)} aria-label="Close menu" className="text-white/70">✕</button>
+            </div>
+            <div className="font-mono text-[10.5px] uppercase tracking-wider text-indigo-400/80 mb-2.5 ml-2.5">Supervisor</div>
+            {navItemsList}
+            <Link to="/" className="flex items-center gap-3 px-3 py-2.5 rounded-[11px] text-sm font-medium text-[#e8927f] hover:bg-white/5 mt-2">
+              Log out
+            </Link>
+            <div className="mt-auto pt-5 border-t border-white/10 flex items-center gap-2.5">
+              <div className="w-[26px] h-[26px] rounded-full bg-indigo-400 flex-shrink-0" />
+              <div>
+                <p className="text-[13.5px] font-semibold">{currentSupervisor.name}</p>
+                <span className="text-[11.5px] text-indigo-300">{currentSupervisor.town} · Supervisor</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {/* Desktop sidebar */}
       <aside className="hidden md:flex flex-col bg-indigo-950 text-white px-[18px] py-[26px]">
         <Logo light className="mb-9 pl-1.5" />
         <div className="font-mono text-[10.5px] uppercase tracking-wider text-indigo-400/80 mb-2.5 ml-2.5">Supervisor</div>
-        <NavItem label="Jobs" active={view === "jobs"} onClick={() => setView("jobs")} badge={exceptionsCount} />
-        <NavItem label="Runners" active={view === "runners"} onClick={() => setView("runners")} />
-        <NavItem label="Customers" active={view === "customers"} onClick={() => setView("customers")} />
-        {currentSupervisor.canViewFinancials && (
-          <NavItem label="Money movement" active={view === "money"} onClick={() => setView("money")} />
-        )}
+        {navItemsList}
         <Link to="/" className="flex items-center gap-3 px-3 py-2.5 rounded-[11px] text-sm font-medium text-[#e8927f] hover:bg-white/5 mt-2">
           Log out
         </Link>
@@ -169,23 +217,40 @@ export default function SupervisorDashboard() {
         </div>
       </aside>
 
-      <main className="px-5 md:px-9 py-7">
-        <div className="flex justify-between items-center flex-wrap gap-4 mb-7">
+      <main className="px-4 sm:px-5 md:px-9 py-6 md:py-7">
+        <div className="flex justify-between items-start md:items-center flex-wrap gap-4 mb-6 md:mb-7">
           <div>
-            <h1 className="text-2xl">Good morning, {currentSupervisor.name.split(" ")[0]}</h1>
-            <p className="text-ink-soft text-[13.5px] mt-1">{activeCount} jobs moving right now · {currentSupervisor.town}</p>
+            <h1 className="text-xl sm:text-2xl">Good morning, {currentSupervisor.name.split(" ")[0]}</h1>
+            <p className="text-ink-soft text-[13.5px] mt-1">
+              {activeCount} jobs moving right now · {currentSupervisor.town === "All towns" && townFilter !== "all" ? townFilter : currentSupervisor.town}
+            </p>
           </div>
-          <div className="flex items-center gap-2.5 bg-white border-[1.5px] border-line rounded-xl px-4 py-2.5 w-full md:w-[280px]">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="w-4 h-4 text-ink-soft flex-shrink-0">
-              <circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" />
-            </svg>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search job ID, runner or client..."
-              className="border-none outline-none text-[13.5px] w-full"
-            />
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full md:w-auto">
+            {currentSupervisor.town === "All towns" && (
+              <select
+                value={townFilter}
+                onChange={(e) => setTownFilter(e.target.value)}
+                className="bg-white border-[1.5px] border-line rounded-xl px-4 py-2.5 text-[13.5px] w-full sm:w-[190px] focus:outline-none focus:border-indigo-500"
+                aria-label="Filter by town"
+              >
+                <option value="all">All towns</option>
+                {TOWNS.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            )}
+            <div className="flex items-center gap-2.5 bg-white border-[1.5px] border-line rounded-xl px-4 py-2.5 w-full md:w-[280px]">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="w-4 h-4 text-ink-soft flex-shrink-0">
+                <circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" />
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search job ID, runner or client..."
+                className="border-none outline-none text-[13.5px] w-full"
+              />
+            </div>
           </div>
         </div>
 

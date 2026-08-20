@@ -3,6 +3,7 @@ import { useNow } from "../useNow";
 import { formatRelativeTime } from "../formatRelativeTime";
 import Button from "../../components/Button";
 import type { CustomerTask, DeliveryMode, JobType, Quote } from "../../types/types";
+import { TOWNS, type TownName } from "../../types/platform";
 import { categoryIcons } from "../categoryIcons";
 import { IconCamera, IconClose, IconPin } from "../icons";
 
@@ -37,6 +38,7 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
   const [description, setDescription] = useState(initialTask?.description ?? "");
   const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>(initialTask?.deliveryMode ?? "location");
   const [location, setLocation] = useState(initialTask?.location ?? "");
+  const [town, setTown] = useState<TownName | "">(initialTask?.town ?? "");
   const [savingLocation, setSavingLocation] = useState(false);
   const [newLocationLabel, setNewLocationLabel] = useState("");
   const [deadline, setDeadline] = useState(initialTask?.deadline ? toLocalDatetimeInput(initialTask.deadline) : "");
@@ -69,6 +71,7 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
   function validate() {
     const next: Record<string, string> = {};
     if (!title.trim()) next.title = "Give your task a short title.";
+    if (!town) next.town = "Choose which city or town this is in.";
     if (!location.trim()) next.location = "Let runners know where this is.";
     if (!deadline) {
       next.deadline = "Choose when you need this done by.";
@@ -96,6 +99,7 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
         description: description.trim(),
         deliveryMode,
         location: location.trim(),
+        town: town as TownName,
         deadline: new Date(deadline).toISOString(),
         budget: resolvedBudget,
         referencePhotos: photos,
@@ -117,6 +121,7 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
       description: description.trim(),
       deliveryMode,
       location: location.trim(),
+      town: town as TownName,
       deadline: new Date(deadline).toISOString(),
       budget: resolvedBudget,
       status: "posted",
@@ -183,6 +188,18 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
       </Field>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 mb-[18px]">
+        <Field label="Town / city" error={errors.town} noMarginBottom>
+          <select
+            value={town}
+            onChange={(e) => setTown(e.target.value as TownName)}
+            className={inputClass(!!errors.town)}
+          >
+            <option value="" disabled>Select a town or city</option>
+            {TOWNS.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </Field>
         <Field label="Location" error={errors.location} noMarginBottom>
           <div className="relative">
             <IconPin className="w-4 h-4 text-ink-soft absolute left-4 top-1/2 -translate-y-1/2" />
@@ -228,6 +245,9 @@ export default function PostTaskForm({ mode = "create", initialTask, savedLocati
             </div>
           )}
         </Field>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 mb-[18px]">
         <Field label="Needed by" error={errors.deadline} noMarginBottom>
           <input
             type="datetime-local"

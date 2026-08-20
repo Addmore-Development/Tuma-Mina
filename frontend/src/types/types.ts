@@ -9,6 +9,8 @@ export type DeliveryMode = "location" | "person" | "courier";
 
 export type CourierProvider = "Courier Guy" | "Pexi";
 
+export type { TownName } from "./platform";
+
 export type CustomerTaskStatus =
   | "posted"
   | "accepted"
@@ -47,6 +49,7 @@ export interface CustomerTask {
   description: string;
   deliveryMode: DeliveryMode;
   location: string;
+  town: TownName;
   deadline: string;
   budget: number | null;
   status: CustomerTaskStatus;

@@ -48,6 +48,7 @@ export default function AdminDashboard() {
   const [jobSearch, setJobSearch] = useState("");
   const [showAddSupervisor, setShowAddSupervisor] = useState(false);
   const [newSupervisorCreds, setNewSupervisorCreds] = useState<{ email: string; temporaryPassword: string } | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     // Each fetch is named so that if one table/query fails (e.g. an RLS
@@ -207,14 +208,52 @@ export default function AdminDashboard() {
     return <div className="min-h-screen flex items-center justify-center text-ink-soft text-[14px]">Loading admin dashboard…</div>;
   }
 
+  const navItemsList = (
+    <>
+      {navItems.map((n) => (
+        <NavItem key={n.key} label={n.label} active={view === n.key} badge={n.badge} onClick={() => { setView(n.key); setMobileNavOpen(false); }} />
+      ))}
+    </>
+  );
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-[250px_1fr] min-h-screen bg-lavender-100">
+    <div className="md:grid md:grid-cols-[250px_1fr] min-h-screen bg-lavender-100">
+      {/* Mobile top bar */}
+      <div className="md:hidden sticky top-0 z-40 flex items-center justify-between bg-indigo-950 text-white px-4 py-3.5">
+        <button onClick={() => setMobileNavOpen(true)} aria-label="Open menu" className="p-1 -ml-1 text-2xl leading-none">☰</button>
+        <Logo light />
+        <span className="text-[11px] font-mono uppercase tracking-wider text-indigo-300">Admin</span>
+      </div>
+
+      {/* Mobile off-canvas nav */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-indigo-950/50" onClick={() => setMobileNavOpen(false)} />
+          <aside className="absolute left-0 top-0 bottom-0 w-[270px] bg-indigo-950 text-white px-[18px] py-[22px] flex flex-col overflow-y-auto">
+            <div className="flex items-center justify-between mb-8">
+              <Logo light />
+              <button onClick={() => setMobileNavOpen(false)} aria-label="Close menu" className="text-white/70">✕</button>
+            </div>
+            <div className="font-mono text-[10.5px] uppercase tracking-wider text-indigo-400/80 mb-2.5 ml-2.5">Admin</div>
+            {navItemsList}
+            <Link to="/" className="flex items-center gap-3 px-3 py-2.5 rounded-[11px] text-sm font-medium text-[#e8927f] hover:bg-white/5 mt-2">
+              Log out
+            </Link>
+            <div className="mt-auto pt-5 border-t border-white/10 flex items-center gap-2.5">
+              <div className="w-[26px] h-[26px] rounded-full bg-indigo-400 flex-shrink-0" />
+              <div>
+                <p className="text-[13.5px] font-semibold">Admin</p>
+                <span className="text-[11.5px] text-indigo-300">Full access</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
       <aside className="hidden md:flex flex-col bg-indigo-950 text-white px-[18px] py-[26px]">
         <Logo light className="mb-9 pl-1.5" />
         <div className="font-mono text-[10.5px] uppercase tracking-wider text-indigo-400/80 mb-2.5 ml-2.5">Admin</div>
-        {navItems.map((n) => (
-          <NavItem key={n.key} label={n.label} active={view === n.key} badge={n.badge} onClick={() => setView(n.key)} />
-        ))}
+        {navItemsList}
         <Link to="/" className="flex items-center gap-3 px-3 py-2.5 rounded-[11px] text-sm font-medium text-[#e8927f] hover:bg-white/5 mt-2">
           Log out
         </Link>
@@ -227,7 +266,7 @@ export default function AdminDashboard() {
         </div>
       </aside>
 
-      <main className="px-5 md:px-9 py-7">
+      <main className="px-4 sm:px-5 md:px-9 py-6 md:py-7">
         {error && (
           <div className="mb-5 px-4 py-3 rounded-xl bg-[#fdeaea] text-[#a83232] text-[13px] flex items-center justify-between gap-3">
             {error}
@@ -268,11 +307,19 @@ export default function AdminDashboard() {
           <>
             <PageHeader title="All jobs" subtitle="Every job posted on the platform, across all towns — who posted it and who took it." />
             <div className="flex flex-col gap-3 mb-4">
-              <div className="flex gap-2 flex-wrap">
-                <TownFilterPill label="All towns" active={jobTownFilter === "all"} onClick={() => setJobTownFilter("all")} />
-                {TOWNS.map((t) => (
-                  <TownFilterPill key={t} label={t} active={jobTownFilter === t} onClick={() => setJobTownFilter(t)} />
-                ))}
+              <div className="flex gap-2 flex-wrap items-center">
+                <label className="text-[12px] text-ink-soft font-semibold" htmlFor="job-town-filter">Town</label>
+                <select
+                  id="job-town-filter"
+                  value={jobTownFilter}
+                  onChange={(e) => setJobTownFilter(e.target.value as TownName | "all")}
+                  className="px-3.5 py-2 border-[1.5px] border-line rounded-xl text-[13px] bg-white focus:outline-none focus:border-indigo-500 w-full sm:w-[220px]"
+                >
+                  <option value="all">All towns</option>
+                  {TOWNS.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
               </div>
               <div className="flex gap-3 flex-wrap items-center">
                 <select
@@ -698,19 +745,6 @@ function StatCard({ label, value, warn = false }: { label: string; value: string
       <span className="text-[11px] sm:text-xs font-semibold text-ink-soft block mb-2">{label}</span>
       <h3 className="text-[22px] sm:text-[27px]">{value}</h3>
     </div>
-  );
-}
-
-function TownFilterPill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3.5 py-1.5 rounded-full text-[13px] font-medium transition ${
-        active ? "bg-indigo-950 text-white" : "bg-white border border-line text-ink-soft hover:border-indigo-400 hover:text-indigo-600"
-      }`}
-    >
-      {label}
-    </button>
   );
 }
 

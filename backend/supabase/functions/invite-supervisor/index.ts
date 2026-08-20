@@ -16,6 +16,24 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+/** A random, readable temporary password — the admin shares this with the
+ *  new supervisor, who should change it after their first login. */
+function generateTempPassword(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  let pw = "";
+  for (let i = 0; i < 12; i++) {
+    pw += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return pw;
+}
+
 Deno.serve(async (req) => {
   // Handle the browser's CORS preflight request.
   if (req.method === "OPTIONS") {
@@ -25,7 +43,7 @@ Deno.serve(async (req) => {
   try {
     // 1. Verify the caller is an authenticated admin.
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return new Response("Missing auth", { status: 401, headers: corsHeaders });
+    if (!authHeader) return json({ error: "Missing auth" }, 401);
 
     const callerClient = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -33,36 +51,39 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     );
     const { data: userData, error: userErr } = await callerClient.auth.getUser();
-    if (userErr || !userData.user) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+    if (userErr || !userData.user) return json({ error: "Unauthorized" }, 401);
 
     const { data: callerProfile } = await callerClient
       .from("profiles")
       .select("role")
       .eq("id", userData.user.id)
       .single();
-    if (callerProfile?.role !== "admin") return new Response("Forbidden — admin only", { status: 403, headers: corsHeaders });
+    if (callerProfile?.role !== "admin") return json({ error: "Forbidden — admin only" }, 403);
 
-    // 2. Create the supervisor's auth user via a magic-link invite (they set
-    // their own password on first login — admin never sees/sets it).
+    // 2. Create the supervisor's auth user with a generated temporary
+    // password, pre-confirmed so they can log in immediately (no email
+    // step required — the admin relays the password directly).
     const body = await req.json();
     const { name, surname, email, town, canViewFinancials } = body;
+    if (!name || !surname || !email) return json({ error: "Name, surname, and email are required" }, 400);
 
-    // Passing role/name/surname as invite metadata means the handle_new_user
-    // trigger (schema fixes.sql) inserts the profiles row itself, correctly
-    // tagged as "supervisor", the moment the auth user is created — same
-    // pattern create-supervisor.ps1 uses.
-    const { data: invited, error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
-      data: { role: "supervisor", name, surname },
+    const tempPassword = generateTempPassword();
+
+    const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: { role: "supervisor", name, surname },
     });
-    if (inviteErr) throw inviteErr;
-    const newUserId = invited.user.id;
+    if (createErr) throw createErr;
+    const newUserId = created.user.id;
 
     // 3. Provision profiles + supervisor_profiles rows.
     // Upsert (not insert): handle_new_user already inserted a profiles row
-    // for this id as part of creating the auth user above, so a plain
-    // insert here always fails on the primary key and the whole invite
-    // errors out. Upsert makes this idempotent and also covers the case
-    // where the trigger's metadata read ever falls out of sync with this.
+    // for this id as part of creating the auth user above (see "schema
+    // fixes.sql"), so a plain insert here always fails on the primary key.
+    // Upsert makes this idempotent and also covers the case where the
+    // trigger's metadata read ever falls out of sync with this.
     const { error: profileErr } = await supabaseAdmin.from("profiles").upsert(
       { id: newUserId, role: "supervisor", name, surname, email },
       { onConflict: "id" }
@@ -77,13 +98,8 @@ Deno.serve(async (req) => {
     });
     if (supError) throw supError;
 
-    return new Response(JSON.stringify({ ok: true, userId: newUserId }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json({ ok: true, userId: newUserId, email, temporaryPassword: tempPassword });
   } catch (e) {
-    return new Response(JSON.stringify({ error: e.message }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json({ error: e.message ?? "Something went wrong creating this supervisor." }, 400);
   }
 });

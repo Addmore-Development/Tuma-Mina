@@ -11,7 +11,17 @@ export async function fetchMySupervisorProfile() {
     .eq("id", userId)
     .single();
   if (error) throw error;
-  return data; // includes can_view_financials — gate the Money tab on this
+
+  // Normalize into the flat shape the dashboard expects — the raw row has
+  // the person's name nested under `profiles` and the financials flag in
+  // snake_case, neither of which match `currentSupervisor.name` /
+  // `.canViewFinancials` as used in supervisorDashboard.tsx.
+  const fullName = [data.profiles?.name, data.profiles?.surname].filter(Boolean).join(" ") || "Supervisor";
+  return {
+    name: fullName,
+    town: (data.town ?? "All towns") as string,
+    canViewFinancials: !!data.can_view_financials,
+  };
 }
 
 export async function fetchScopedJobs(town: string | null) {
@@ -22,7 +32,20 @@ export async function fetchScopedJobs(town: string | null) {
   if (town) query = query.eq("town", town);
   const { data, error } = await query;
   if (error) throw error;
-  return data;
+
+  // Same normalization as fetchMySupervisorProfile / fetchScopedRunners
+  // above — raw rows nest names under joined tables, but
+  // supervisorDashboard.tsx renders these flat (j.id as the display id,
+  // j.customerName, j.runnerName, j.price).
+  return (data ?? []).map((j: any) => ({
+    id: j.display_id ?? j.id,
+    title: j.title,
+    customerName: j.customer_profiles?.profiles?.name ?? "Customer",
+    runnerName: j.runner_profiles?.profiles?.name ?? undefined,
+    status: j.status,
+    price: Number(j.price ?? j.budget ?? 0),
+    town: j.town,
+  }));
 }
 
 export async function fetchScopedRunners(town: string | null) {
@@ -30,7 +53,23 @@ export async function fetchScopedRunners(town: string | null) {
   if (town) query = query.eq("town", town);
   const { data, error } = await query;
   if (error) throw error;
-  return data;
+
+  // Same normalization as fetchMySupervisorProfile above — raw rows nest
+  // the person's name under `profiles` and use snake_case, but
+  // supervisorDashboard.tsx renders these as a flat RunnerProfile
+  // (r.name, r.rating, r.completedJobs).
+  return (data ?? []).map((r: any) => ({
+    id: r.id,
+    applicationId: r.application_id ?? r.id,
+    name: [r.profiles?.name, r.profiles?.surname].filter(Boolean).join(" ") || "Runner",
+    town: r.town,
+    phone: r.profiles?.phone ?? "",
+    email: r.profiles?.email ?? "",
+    rating: Number(r.rating ?? 0),
+    completedJobs: Number(r.completed_jobs ?? 0),
+    status: r.status,
+    joinedAt: r.created_at ?? r.joined_at ?? "",
+  }));
 }
 
 /**

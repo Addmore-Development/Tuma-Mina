@@ -19,6 +19,7 @@ export default function RunnerDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [accepting, setAcceptingId] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -100,17 +101,57 @@ export default function RunnerDashboard() {
     return <ApplicationRejectedScreen name={application.name} reason={application.rejectionReason} />;
   }
 
+  const navItemsList = (
+    <>
+      <NavItem label="Available jobs" active={view === "available"} onClick={() => { setView("available"); setMobileNavOpen(false); }} count={townJobs.length} />
+      <NavItem label="My jobs" active={view === "myjobs"} onClick={() => { setView("myjobs"); setMobileNavOpen(false); }} count={myJobs.filter((j) => j.status !== "completed").length} />
+      <NavItem label="Earnings" active={view === "earnings"} onClick={() => { setView("earnings"); setMobileNavOpen(false); }} />
+      <NavItem label="Profile" active={view === "profile"} onClick={() => { setView("profile"); setMobileNavOpen(false); }} />
+    </>
+  );
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] min-h-screen bg-lavender-100">
+    <div className="md:grid md:grid-cols-[240px_1fr] min-h-screen bg-lavender-100">
+      {/* Mobile top bar */}
+      <div className="md:hidden sticky top-0 z-40 flex items-center justify-between bg-indigo-950 text-white px-4 py-3.5">
+        <button onClick={() => setMobileNavOpen(true)} aria-label="Open menu" className="p-1 -ml-1 text-2xl leading-none">☰</button>
+        <Logo light />
+        <span className="text-[11px] font-mono uppercase tracking-wider text-indigo-300">Runner</span>
+      </div>
+
+      {/* Mobile off-canvas nav */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-indigo-950/50" onClick={() => setMobileNavOpen(false)} />
+          <aside className="absolute left-0 top-0 bottom-0 w-[270px] bg-indigo-950 text-white px-[18px] py-[22px] flex flex-col overflow-y-auto">
+            <div className="flex items-center justify-between mb-8">
+              <Logo light />
+              <button onClick={() => setMobileNavOpen(false)} aria-label="Close menu" className="text-white/70">✕</button>
+            </div>
+            <div className="font-mono text-[10.5px] uppercase tracking-wider text-indigo-400/80 mb-2.5 ml-2.5">Runner</div>
+            {navItemsList}
+            <Link to="/" className="flex items-center gap-3 px-3 py-2.5 rounded-[11px] text-sm font-medium text-[#e8927f] hover:bg-white/5 mt-2">
+              Log out
+            </Link>
+            <div className="mt-auto pt-5 border-t border-white/10 flex items-center gap-2.5">
+              <div className="w-[26px] h-[26px] rounded-full bg-coral flex-shrink-0 flex items-center justify-center text-[12px] font-bold">
+                {application.name.charAt(0)}
+              </div>
+              <div>
+                <p className="text-[13.5px] font-semibold">{application.name}</p>
+                <span className="text-[11.5px] text-indigo-300">{application.town} · Runner</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
       <aside className="hidden md:flex flex-col bg-indigo-950 text-white px-[18px] py-[26px]">
         <Logo light className="mb-9 pl-1.5" />
         <div className="font-mono text-[10.5px] uppercase tracking-wider text-indigo-400/80 mb-2.5 ml-2.5">
           Runner
         </div>
-        <NavItem label="Available jobs" active={view === "available"} onClick={() => setView("available")} count={townJobs.length} />
-        <NavItem label="My jobs" active={view === "myjobs"} onClick={() => setView("myjobs")} count={myJobs.filter((j) => j.status !== "completed").length} />
-        <NavItem label="Earnings" active={view === "earnings"} onClick={() => setView("earnings")} />
-        <NavItem label="Profile" active={view === "profile"} onClick={() => setView("profile")} />
+        {navItemsList}
         <Link to="/" className="flex items-center gap-3 px-3 py-2.5 rounded-[11px] text-sm font-medium text-[#e8927f] hover:bg-white/5 mt-2">
           Log out
         </Link>
@@ -125,7 +166,7 @@ export default function RunnerDashboard() {
         </div>
       </aside>
 
-      <main className="px-5 md:px-9 py-7">
+      <main className="px-4 sm:px-5 md:px-9 py-6 md:py-7">
         {view === "available" && (
           <>
             <PageHeader title="Available jobs" subtitle={`Jobs posted in ${application.town} — first accepted, first served.`} />
