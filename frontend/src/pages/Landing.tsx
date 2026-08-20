@@ -58,16 +58,56 @@ const taskFilters = [
   { title: "Custom tasks", icon: IconEdit },
 ];
 
-// Popular tasks — solid-colour tiles stand in for photography, title + price only
+// Popular tasks — real photography with a dark scrim so icon + text stay legible
 const popularTasks = [
-  { title: "Parcel Delivery", price: "From R60", icon: IconPackage, bg: "bg-indigo-950" },
-  { title: "Document Courier", price: "From R80", icon: IconDocument, bg: "bg-coral" },
-  { title: "Home Affairs Queue", price: "From R120", icon: IconClock, bg: "bg-indigo-600" },
-  { title: "Grocery Run", price: "From R90", icon: IconCart, bg: "bg-brand-green" },
-  { title: "Bank Queue", price: "From R100", icon: IconClock, bg: "bg-indigo-900" },
-  { title: "Furniture Pickup", price: "From R150", icon: IconPin, bg: "bg-coral-dark" },
-  { title: "Gift Delivery", price: "From R70", icon: IconPackage, bg: "bg-indigo-600" },
-  { title: "Custom Errand", price: "Get a quote", icon: IconEdit, bg: "bg-indigo-950" },
+  {
+    title: "Parcel Delivery",
+    price: "From R60",
+    icon: IconPackage,
+    img: "https://images.pexels.com/photos/7843999/pexels-photo-7843999.jpeg?auto=compress&cs=tinysrgb&w=800",
+  },
+  {
+    title: "Document Courier",
+    price: "From R80",
+    icon: IconDocument,
+    img: "https://images.pexels.com/photos/6170189/pexels-photo-6170189.jpeg?auto=compress&cs=tinysrgb&w=800",
+  },
+  {
+    title: "Home Affairs Queue",
+    price: "From R120",
+    icon: IconClock,
+    img: "https://images.pexels.com/photos/3848898/pexels-photo-3848898.jpeg?auto=compress&cs=tinysrgb&w=800",
+  },
+  {
+    title: "Grocery Run",
+    price: "From R90",
+    icon: IconCart,
+    img: "https://images.pexels.com/photos/5957/pexels-photo-5957.jpeg?auto=compress&cs=tinysrgb&w=800",
+  },
+  {
+    title: "Bank Queue",
+    price: "From R100",
+    icon: IconClock,
+    img: "https://images.pexels.com/photos/38815862/pexels-photo-38815862.jpeg?auto=compress&cs=tinysrgb&w=800",
+  },
+  {
+    title: "Furniture Pickup",
+    price: "From R150",
+    icon: IconPin,
+    img: "https://images.pexels.com/photos/7464676/pexels-photo-7464676.jpeg?auto=compress&cs=tinysrgb&w=800",
+  },
+  {
+    title: "Gift Delivery",
+    price: "From R70",
+    icon: IconPackage,
+    img: "https://images.pexels.com/photos/12725414/pexels-photo-12725414.jpeg?auto=compress&cs=tinysrgb&w=800",
+  },
+  {
+    title: "Custom Errand",
+    price: "Get a quote",
+    icon: IconEdit,
+    img: "https://images.pexels.com/photos/5191391/pexels-photo-5191391.jpeg?auto=compress&cs=tinysrgb&w=800",
+  },
 ];
 
 // Simplified "How it works" steps for the runner overlay card
@@ -224,8 +264,12 @@ export default function Landing() {
                 key={t.title}
                 className="bg-white rounded-2xl overflow-hidden border border-line hover:-translate-y-1 hover:shadow-sm2 transition"
               >
-                <div className={`aspect-[4/3] flex items-center justify-center ${t.bg}`}>
-                  <Icon className="w-9 h-9 text-white" />
+                <div
+                  className="relative aspect-[4/3] flex items-center justify-center bg-indigo-950 bg-cover bg-center"
+                  style={{ backgroundImage: `url(${t.img})` }}
+                >
+                  <div className="absolute inset-0 bg-indigo-950/55" />
+                  <Icon className="relative w-9 h-9 text-white drop-shadow" />
                 </div>
                 <div className="p-4">
                   <h5 className="text-[14.5px] leading-snug mb-1">{t.title}</h5>
