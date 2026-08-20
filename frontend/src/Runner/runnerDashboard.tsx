@@ -6,6 +6,7 @@ import type { PlatformJob, RunnerApplication } from "../types/platform";
 import { fetchMyApplication, fetchAvailableJobs, fetchMyJobs, acceptAvailableJob } from "../lib/supabase/runner";
 import { subscribeToTables, unsubscribe } from "../lib/supabase/realtime";
 import { getErrorMessage } from "../lib/getErrorMessage";
+import RunnerJobDetail from "./components/RunnerJobDetail";
 
 type View = "available" | "myjobs" | "earnings" | "profile";
 
@@ -17,6 +18,7 @@ export default function RunnerDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [accepting, setAcceptingId] = useState<string | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -46,6 +48,7 @@ export default function RunnerDashboard() {
 
   // Runners only ever see jobs posted in their own town.
   const townJobs = availableJobs;
+  const selectedJob = selectedJobId ? myJobs.find((j) => j.id === selectedJobId) ?? null : null;
 
   const earnings = useMemo(() => {
     const completed = myJobs.filter((j) => j.status === "completed");
@@ -58,6 +61,7 @@ export default function RunnerDashboard() {
     try {
       await acceptAvailableJob(job.id);
       await loadAll();
+      setSelectedJobId(job.id);
       setView("myjobs");
     } catch (e) {
       setError(getErrorMessage(e, "Couldn't accept that job — it may already be taken."));
@@ -149,7 +153,11 @@ export default function RunnerDashboard() {
           </>
         )}
 
-        {view === "myjobs" && (
+        {view === "myjobs" && selectedJob && (
+          <RunnerJobDetail job={selectedJob} onBack={() => setSelectedJobId(null)} onUpdated={loadAll} />
+        )}
+
+        {view === "myjobs" && !selectedJob && (
           <>
             <PageHeader title="My jobs" subtitle="Jobs you've accepted, in progress, or completed." />
             <div className="bg-white rounded-2xl border border-line overflow-hidden">
@@ -157,7 +165,11 @@ export default function RunnerDashboard() {
                 <EmptyState text="You haven't accepted any jobs yet." compact />
               ) : (
                 myJobs.map((job) => (
-                  <div key={job.id} className="flex items-center justify-between gap-3 px-5 py-4 border-b border-line last:border-b-0">
+                  <button
+                    key={job.id}
+                    onClick={() => setSelectedJobId(job.id)}
+                    className="w-full flex items-center justify-between gap-3 px-5 py-4 border-b border-line last:border-b-0 text-left hover:bg-lavender-100/60 transition"
+                  >
                     <div className="min-w-0">
                       <p className="text-[13.5px] font-semibold">{job.title}</p>
                       <p className="text-[12px] text-ink-soft font-mono">#{job.id} · {job.customerName}</p>
@@ -166,7 +178,7 @@ export default function RunnerDashboard() {
                       <span className="text-[14px] font-bold">R{job.price}</span>
                       <StatusPill status={job.status} />
                     </div>
-                  </div>
+                  </button>
                 ))
               )}
             </div>

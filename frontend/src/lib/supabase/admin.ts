@@ -104,8 +104,19 @@ export async function addSupervisor(input: {
       canViewFinancials: input.canViewFinancials,
     },
   });
-  if (error) throw error;
-  return data;
+  if (error) {
+    // supabase-js only gives a generic "non-2xx status code" message for
+    // Edge Function errors — the actual reason is in the response body.
+    let detail: string | undefined;
+    try {
+      const ctx = (error as { context?: Response }).context;
+      if (ctx) detail = (await ctx.clone().json())?.error;
+    } catch {
+      // response body wasn't JSON — fall back to the generic error below
+    }
+    throw new Error(detail || error.message);
+  }
+  return data as { ok: true; userId: string; email: string; temporaryPassword: string };
 }
 
 export async function fetchAllSupervisors() {

@@ -62,6 +62,11 @@ export interface CustomerTask {
   courierProvider?: CourierProvider;
   trackingNumber?: string;
   proofPhotoUrl?: string;
+  // Set when deliveryMode is "location" — where the runner actually dropped
+  // it off, captured from their device on submission, so the customer can
+  // see it on a map alongside the proof photo.
+  dropLat?: number;
+  dropLng?: number;
   deliveredAt?: string;
   // When payment auto-releases to the runner if the customer doesn't
   // explicitly approve first (see AUTO_RELEASE_HOURS in TaskDetail.tsx).

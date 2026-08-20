@@ -1,5 +1,3 @@
-
-
 export const TOWNS = ["Rustenburg", "Johannesburg", "Pretoria"] as const;
 export type TownName = (typeof TOWNS)[number];
 
@@ -14,6 +12,8 @@ export type PlatformJobStatus =
   | "disputed"
   | "cancelled";
 
+export type PlatformDeliveryMode = "location" | "person" | "courier";
+
 // A job as seen by Admin/Supervisor/Runner — i.e. the platform-wide view,
 // as opposed to CustomerTask in types/types.ts which is the same job as
 // seen from the customer's own dashboard.
@@ -21,8 +21,10 @@ export interface PlatformJob {
   id: string;
   title: string;
   category: JobCategory;
+  description: string;
   town: TownName;
   location: string;
+  deliveryMode: PlatformDeliveryMode;
   customerName: string;
   runnerName?: string;
   status: PlatformJobStatus;
@@ -30,6 +32,22 @@ export interface PlatformJob {
   platformFee: number;
   postedAt: string;
   deadline: string;
+  referencePhotos: string[];
+  // Escrow: only true once the customer has funded the job from their
+  // wallet (see fund_task RPC). A runner can start/complete work either
+  // way, but this is worth surfacing so they know payment is secured.
+  funded: boolean;
+  // Proof-of-delivery, set by the runner once submitted — mirrors the
+  // fields on CustomerTask in types/types.ts.
+  proofPhotoUrl?: string;
+  courierProvider?: string;
+  trackingNumber?: string;
+  dropLat?: number;
+  dropLng?: number;
+  deliveredAt?: string;
+  autoReleaseAt?: string;
+  completedAt?: string;
+  cancelReason?: string;
 }
 
 // --- Runner KYC / verification -------------------------------------------

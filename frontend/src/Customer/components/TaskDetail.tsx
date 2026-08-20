@@ -414,8 +414,31 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onApprove,
             <div className="mb-6">
               <h3 className="text-[13px] font-semibold mb-2.5">Proof of completion</h3>
               {task.deliveryMode === "location" ? (
-                <div className="flex items-center gap-2.5 p-3.5 border-[1.5px] border-line rounded-xl text-[13.5px] text-ink-soft mb-3">
-                  <IconCamera className="w-5 h-5 flex-shrink-0" /> Photo uploaded by your runner as proof of drop-off.
+                <div className="p-3.5 border-[1.5px] border-line rounded-xl mb-3">
+                  <div className="flex items-center gap-2.5 text-[13.5px] text-ink-soft mb-2.5">
+                    <IconCamera className="w-5 h-5 flex-shrink-0" /> Photo uploaded by your runner as proof of drop-off.
+                  </div>
+                  {task.proofPhotoUrl && (
+                    <img src={task.proofPhotoUrl} alt="Proof of drop-off" className="w-full max-w-[280px] rounded-lg object-cover mb-2.5" />
+                  )}
+                  {task.dropLat != null && task.dropLng != null && (
+                    <a
+                      href={`https://www.google.com/maps?q=${task.dropLat},${task.dropLng}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[12.5px] font-semibold text-indigo-600 underline"
+                    >
+                      View drop-off location on the map
+                    </a>
+                  )}
+                </div>
+              ) : task.deliveryMode === "courier" ? (
+                <div className="p-3.5 border-[1.5px] border-line rounded-xl mb-3">
+                  <div className="flex items-center gap-2.5 text-[13.5px] text-ink-soft mb-1.5">
+                    <IconCheck className="w-5 h-5 flex-shrink-0 text-brand-green" /> Your runner handed this off to a courier.
+                  </div>
+                  <p className="text-[13px] font-semibold">{task.courierProvider}</p>
+                  <p className="text-[12.5px] text-ink-soft font-mono">Tracking: {task.trackingNumber}</p>
                 </div>
               ) : (
                 <div className="flex items-center gap-2.5 p-3.5 border-[1.5px] border-line rounded-xl text-[13.5px] text-ink-soft mb-3">
@@ -504,7 +527,9 @@ export default function TaskDetail({ task, balance, onBack, onUpdate, onApprove,
           <p className="text-[12px] text-ink-soft mb-1">Location</p>
           <p className="text-[13.5px] font-medium mb-3">{task.location}</p>
           <p className="text-[12px] text-ink-soft mb-1">Delivery type</p>
-          <p className="text-[13.5px] font-medium mb-3">{task.deliveryMode === "location" ? "Drop at a location" : "Hand to a person"}</p>
+          <p className="text-[13.5px] font-medium mb-3">
+            {task.deliveryMode === "location" ? "Drop at a location" : task.deliveryMode === "courier" ? "Courier / Paxi" : "Hand to a person"}
+          </p>
           <p className="text-[12px] text-ink-soft mb-1">Budget</p>
           <p className="text-[13.5px] font-medium">{task.budget ? `R${task.budget}` : "Open to quotes"}</p>
         </div>

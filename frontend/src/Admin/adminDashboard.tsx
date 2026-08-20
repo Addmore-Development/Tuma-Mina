@@ -44,7 +44,10 @@ export default function AdminDashboard() {
 
   const [view, setView] = useState<View>("overview");
   const [jobTownFilter, setJobTownFilter] = useState<TownName | "all">("all");
+  const [jobStatusFilter, setJobStatusFilter] = useState<string>("all");
+  const [jobSearch, setJobSearch] = useState("");
   const [showAddSupervisor, setShowAddSupervisor] = useState(false);
+  const [newSupervisorCreds, setNewSupervisorCreds] = useState<{ email: string; temporaryPassword: string } | null>(null);
 
   const loadAll = useCallback(async () => {
     // Each fetch is named so that if one table/query fails (e.g. an RLS
@@ -109,10 +112,29 @@ export default function AdminDashboard() {
 
   const pendingApplications = applications; // fetchPendingApplications already filters to pending
   const activeRunners = useMemo(() => runners.filter((r) => r.status === "active"), [runners]);
-  const filteredJobs = useMemo(
-    () => (jobTownFilter === "all" ? jobs : jobs.filter((j) => j.town === jobTownFilter)),
-    [jobs, jobTownFilter]
-  );
+  const jobStatuses = useMemo(() => Array.from(new Set(jobs.map((j) => j.status))).sort(), [jobs]);
+  const filteredJobs = useMemo(() => {
+    const q = jobSearch.trim().toLowerCase();
+    return jobs.filter((j) => {
+      if (jobTownFilter !== "all" && j.town !== jobTownFilter) return false;
+      if (jobStatusFilter !== "all" && j.status !== jobStatusFilter) return false;
+      if (q) {
+        const haystack = [
+          j.title,
+          j.display_id,
+          j.customer_profiles?.profiles?.name,
+          j.customer_profiles?.profiles?.surname,
+          j.runner_profiles?.profiles?.name,
+          j.runner_profiles?.profiles?.surname,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [jobs, jobTownFilter, jobStatusFilter, jobSearch]);
 
   async function approveApplicationHandler(app: Row) {
     if (!isApplicationComplete(app)) return;
@@ -144,8 +166,9 @@ export default function AdminDashboard() {
 
   async function addSupervisorHandler(name: string, surname: string, email: string, town: TownName | "All towns", canViewFinancials: boolean) {
     try {
-      await apiAddSupervisor({ name, surname, email, town, canViewFinancials });
+      const result = await apiAddSupervisor({ name, surname, email, town, canViewFinancials });
       setShowAddSupervisor(false);
+      setNewSupervisorCreds({ email: result.email, temporaryPassword: result.temporaryPassword });
       await loadAll();
     } catch (e) {
       alert(getErrorMessage(e, "Could not create supervisor account."));
@@ -244,11 +267,44 @@ export default function AdminDashboard() {
         {view === "jobs" && (
           <>
             <PageHeader title="All jobs" subtitle="Every job posted on the platform, across all towns — who posted it and who took it." />
-            <div className="flex gap-2 mb-4 flex-wrap">
-              <TownFilterPill label="All towns" active={jobTownFilter === "all"} onClick={() => setJobTownFilter("all")} />
-              {TOWNS.map((t) => (
-                <TownFilterPill key={t} label={t} active={jobTownFilter === t} onClick={() => setJobTownFilter(t)} />
-              ))}
+            <div className="flex flex-col gap-3 mb-4">
+              <div className="flex gap-2 flex-wrap">
+                <TownFilterPill label="All towns" active={jobTownFilter === "all"} onClick={() => setJobTownFilter("all")} />
+                {TOWNS.map((t) => (
+                  <TownFilterPill key={t} label={t} active={jobTownFilter === t} onClick={() => setJobTownFilter(t)} />
+                ))}
+              </div>
+              <div className="flex gap-3 flex-wrap items-center">
+                <select
+                  value={jobStatusFilter}
+                  onChange={(e) => setJobStatusFilter(e.target.value)}
+                  className="px-3.5 py-2 border-[1.5px] border-line rounded-xl text-[13px] bg-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="all">All statuses</option>
+                  {jobStatuses.map((s) => (
+                    <option key={s} value={s}>{formatStatusLabel(s)}</option>
+                  ))}
+                </select>
+                <input
+                  value={jobSearch}
+                  onChange={(e) => setJobSearch(e.target.value)}
+                  placeholder="Search by job, customer, or runner…"
+                  className="px-3.5 py-2 border-[1.5px] border-line rounded-xl text-[13px] flex-1 min-w-[220px] focus:outline-none focus:border-indigo-500"
+                />
+                {(jobTownFilter !== "all" || jobStatusFilter !== "all" || jobSearch) && (
+                  <button
+                    onClick={() => {
+                      setJobTownFilter("all");
+                      setJobStatusFilter("all");
+                      setJobSearch("");
+                    }}
+                    className="text-[12.5px] text-ink-soft hover:text-indigo-600 font-medium"
+                  >
+                    Clear filters
+                  </button>
+                )}
+                <span className="text-[12.5px] text-ink-soft ml-auto">{filteredJobs.length} of {jobs.length} jobs</span>
+              </div>
             </div>
             <div className="bg-white rounded-2xl border border-line overflow-hidden overflow-x-auto">
               <table className="w-full border-collapse min-w-[720px]">
@@ -260,20 +316,26 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredJobs.map((j) => (
-                    <tr key={j.id}>
-                      <td className="px-4 py-3 text-[13px] border-b border-line">
-                        <span className="font-mono text-[11px] text-ink-soft block">#{j.display_id}</span>
-                        {j.title}
-                      </td>
-                      <td className="px-4 py-3 text-[13px] border-b border-line">{j.town}</td>
-                      <td className="px-4 py-3 text-[13px] border-b border-line">{j.customer_profiles?.profiles?.name ?? "—"}</td>
-                      <td className="px-4 py-3 text-[13px] border-b border-line">{j.runner_profiles?.profiles?.name ?? "Unassigned"}</td>
-                      <td className="px-4 py-3 border-b border-line"><JobStatusPill status={j.status} /></td>
-                      <td className="px-4 py-3 text-[13px] font-semibold border-b border-line">R{j.price ?? j.budget ?? 0}</td>
-                      <td className="px-4 py-3 text-[13px] text-ink-soft border-b border-line">{j.platform_fee ? `R${Number(j.platform_fee).toFixed(2)}` : "—"}</td>
+                  {filteredJobs.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-[13px] text-ink-soft">No jobs match these filters.</td>
                     </tr>
-                  ))}
+                  ) : (
+                    filteredJobs.map((j) => (
+                      <tr key={j.id}>
+                        <td className="px-4 py-3 text-[13px] border-b border-line">
+                          <span className="font-mono text-[11px] text-ink-soft block">#{j.display_id}</span>
+                          {j.title}
+                        </td>
+                        <td className="px-4 py-3 text-[13px] border-b border-line">{j.town}</td>
+                        <td className="px-4 py-3 text-[13px] border-b border-line">{j.customer_profiles?.profiles?.name ?? "—"}</td>
+                        <td className="px-4 py-3 text-[13px] border-b border-line">{j.runner_profiles?.profiles?.name ?? "Unassigned"}</td>
+                        <td className="px-4 py-3 border-b border-line"><JobStatusPill status={j.status} /></td>
+                        <td className="px-4 py-3 text-[13px] font-semibold border-b border-line">R{j.price ?? j.budget ?? 0}</td>
+                        <td className="px-4 py-3 text-[13px] text-ink-soft border-b border-line">{j.platform_fee ? `R${Number(j.platform_fee).toFixed(2)}` : "—"}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -379,6 +441,13 @@ export default function AdminDashboard() {
               ))}
             </div>
             {showAddSupervisor && <AddSupervisorModal onClose={() => setShowAddSupervisor(false)} onCreate={addSupervisorHandler} />}
+            {newSupervisorCreds && (
+              <SupervisorCredentialsModal
+                email={newSupervisorCreds.email}
+                temporaryPassword={newSupervisorCreds.temporaryPassword}
+                onClose={() => setNewSupervisorCreds(null)}
+              />
+            )}
           </>
         )}
 
@@ -543,6 +612,61 @@ function AddSupervisorModal({
       </div>
     </div>
   );
+}
+
+function SupervisorCredentialsModal({
+  email,
+  temporaryPassword,
+  onClose,
+}: {
+  email: string;
+  temporaryPassword: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyCreds() {
+    try {
+      await navigator.clipboard.writeText(`Email: ${email}\nTemporary password: ${temporaryPassword}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can be blocked (permissions, non-HTTPS context) —
+      // the credentials are still shown on screen either way.
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-indigo-950/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-[420px] shadow-lg2" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-[18px] mb-1.5">Supervisor account created</h3>
+        <p className="text-[13px] text-ink-soft mb-5 leading-relaxed">
+          Share these details with them directly — this password won't be shown again. They should change it after their first login.
+        </p>
+        <div className="flex flex-col gap-3 mb-5">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-ink-soft mb-1">Email</p>
+            <p className="text-[14px] font-medium font-mono">{email}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-ink-soft mb-1">Temporary password</p>
+            <p className="text-[16px] font-bold font-mono tracking-wide">{temporaryPassword}</p>
+          </div>
+        </div>
+        <div className="flex gap-3">
+          <Button variant="ghost" block onClick={copyCreds}>{copied ? "Copied ✓" : "Copy details"}</Button>
+          <Button block onClick={onClose}>Done</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatStatusLabel(status: string): string {
+  return status
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 function PageHeader({ title, subtitle }: { title: string; subtitle: string }) {

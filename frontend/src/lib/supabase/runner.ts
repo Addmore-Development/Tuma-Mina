@@ -11,8 +11,10 @@ function mapJobRow(t: any): PlatformJob {
     id: t.display_id,
     title: t.title,
     category: t.category,
+    description: t.description ?? "",
     town: t.town,
     location: t.location,
+    deliveryMode: t.delivery_mode,
     customerName: t.customer_profiles?.profiles?.name ?? "Customer",
     status: t.status,
     // Posted jobs (no accepted price yet) show the customer's budget as the
@@ -21,6 +23,17 @@ function mapJobRow(t: any): PlatformJob {
     platformFee: Number(t.platform_fee ?? (t.budget ? t.budget * 0.15 : 0)),
     postedAt: t.created_at,
     deadline: t.deadline,
+    referencePhotos: t.reference_photos ?? [],
+    funded: t.funded ?? false,
+    proofPhotoUrl: t.proof_photo_path ?? undefined,
+    courierProvider: t.courier_provider ?? undefined,
+    trackingNumber: t.tracking_number ?? undefined,
+    dropLat: t.drop_lat != null ? Number(t.drop_lat) : undefined,
+    dropLng: t.drop_lng != null ? Number(t.drop_lng) : undefined,
+    deliveredAt: t.delivered_at ?? undefined,
+    autoReleaseAt: t.auto_release_at ?? undefined,
+    completedAt: t.completed_at ?? undefined,
+    cancelReason: t.cancel_reason ?? undefined,
   };
 }
 
@@ -130,12 +143,23 @@ export async function respondToCounter(quoteId: string, accept: boolean, counter
   if (histError) throw histError;
 }
 
+const AUTO_RELEASE_HOURS = 72;
+
 export async function markInProgress(taskDisplayId: string) {
   const { error } = await supabase.from("tasks").update({ status: "in_progress" }).eq("display_id", taskDisplayId);
+  if (error) throw error; // RLS restricts this to the assigned runner (runner_id = auth.uid())
+}
+
+/** Runner backs out of a job they've accepted — reopens it for other runners and refunds escrow if funded. */
+export async function cancelAcceptedJob(taskDisplayId: string) {
+  const { data: task, error: taskErr } = await supabase.from("tasks").select("id").eq("display_id", taskDisplayId).single();
+  if (taskErr) throw taskErr;
+  const { error } = await supabase.rpc("runner_cancel_job", { p_task_id: task.id });
   if (error) throw error;
 }
 
-export async function markDelivered(taskDisplayId: string, proofPhoto?: File) {
+/** Proof for delivery_mode "location" — a photo plus the runner's device location at drop-off. */
+export async function markDelivered(taskDisplayId: string, proofPhoto?: File, coords?: { lat: number; lng: number }) {
   const { data: sessionData } = await supabase.auth.getSession();
   const runnerId = sessionData.session?.user.id;
   if (!runnerId) throw new Error("Not logged in");
@@ -148,7 +172,6 @@ export async function markDelivered(taskDisplayId: string, proofPhoto?: File) {
     proofPath = path;
   }
 
-  const AUTO_RELEASE_HOURS = 72;
   const { error } = await supabase
     .from("tasks")
     .update({
@@ -156,23 +179,40 @@ export async function markDelivered(taskDisplayId: string, proofPhoto?: File) {
       delivered_at: new Date().toISOString(),
       auto_release_at: new Date(Date.now() + AUTO_RELEASE_HOURS * 3_600_000).toISOString(),
       proof_photo_path: proofPath,
+      drop_lat: coords?.lat ?? null,
+      drop_lng: coords?.lng ?? null,
     })
     .eq("display_id", taskDisplayId);
   if (error) throw error;
 }
 
+/** Proof for delivery_mode "person" — the receiver's PIN, entered by the runner on hand-off. */
 export async function confirmPinHandoff(taskDisplayId: string, enteredPin: string) {
   const { data: task, error: fetchErr } = await supabase.from("tasks").select("pin").eq("display_id", taskDisplayId).single();
   if (fetchErr) throw fetchErr;
   if (task.pin !== enteredPin) throw new Error("Incorrect PIN");
 
-  const AUTO_RELEASE_HOURS = 72;
   const { error } = await supabase
     .from("tasks")
     .update({
       status: "awaiting_confirmation",
       delivered_at: new Date().toISOString(),
       auto_release_at: new Date(Date.now() + AUTO_RELEASE_HOURS * 3_600_000).toISOString(),
+    })
+    .eq("display_id", taskDisplayId);
+  if (error) throw error;
+}
+
+/** Proof for delivery_mode "courier" (e.g. Paxi) — provider + tracking number. */
+export async function submitCourierProof(taskDisplayId: string, courierProvider: string, trackingNumber: string) {
+  const { error } = await supabase
+    .from("tasks")
+    .update({
+      status: "awaiting_confirmation",
+      delivered_at: new Date().toISOString(),
+      auto_release_at: new Date(Date.now() + AUTO_RELEASE_HOURS * 3_600_000).toISOString(),
+      courier_provider: courierProvider,
+      tracking_number: trackingNumber,
     })
     .eq("display_id", taskDisplayId);
   if (error) throw error;
